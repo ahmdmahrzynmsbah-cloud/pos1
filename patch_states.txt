@@ -1,0 +1,13 @@
+--- app/src/main/java/com/example/ui/InvoiceFormScreen.kt
++++ app/src/main/java/com/example/ui/InvoiceFormScreen.kt
+@@ -133,6 +133,10 @@
+     var lastSavedItems by remember { mutableStateOf<List<CartItem>>(emptyList()) }
+     var selectedUnitItem by remember { mutableStateOf<CartItem?>(null) }
+     var selectedOptionItem by remember { mutableStateOf<CartItem?>(null) }
++    
++    var showCheckDetailsDialog by remember { mutableStateOf(false) }
++    var checkNumberInput by remember { mutableStateOf("") }
++    var checkBankNameInput by remember { mutableStateOf("") }
+ 
+     // Values
+     val subtotal = cart.sumOf { (if (isPurchaseMode) it.product.pricePurchase else it.product.priceSale) * it.quantity }

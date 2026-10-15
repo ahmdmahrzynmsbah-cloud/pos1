@@ -1,0 +1,42 @@
+--- app/src/main/java/com/example/ui/InvoiceFormScreen.kt
++++ app/src/main/java/com/example/ui/InvoiceFormScreen.kt
+@@ -1728,14 +1728,29 @@
+                         singleLine = true,
+                         modifier = Modifier.fillMaxWidth()
+                     )
+-                    // Note: We use a simple view for date, since picking a date via DatePickerDialog
+-                    // is a bit more complex in compose without extra state, we'll keep it simple
+-                    OutlinedTextField(
+-                        value = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date(checkDateInput)),
+-                        onValueChange = { },
+-                        label = { Text("تاريخ الاستلام (تلقائي لتاريخ اليوم)") },
+-                        readOnly = true,
+-                        modifier = Modifier.fillMaxWidth(),
+-                        trailingIcon = { Icon(Icons.Default.DateRange, contentDescription = "تاريخ") }
+-                    )
++                    val context = androidx.compose.ui.platform.LocalContext.current
++                    val cal = java.util.Calendar.getInstance().apply { timeInMillis = checkDateInput }
++                    val datePickerDialog = android.app.DatePickerDialog(
++                        context,
++                        { _, year, month, dayOfMonth ->
++                            val picked = java.util.Calendar.getInstance()
++                            picked.set(year, month, dayOfMonth)
++                            checkDateInput = picked.timeInMillis
++                        },
++                        cal.get(java.util.Calendar.YEAR),
++                        cal.get(java.util.Calendar.MONTH),
++                        cal.get(java.util.Calendar.DAY_OF_MONTH)
++                    )
++                    Box(modifier = Modifier.fillMaxWidth().clickable { datePickerDialog.show() }) {
++                        OutlinedTextField(
++                            value = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date(checkDateInput)),
++                            onValueChange = { },
++                            label = { Text("تاريخ الاستلام") },
++                            readOnly = true,
++                            enabled = false,
++                            colors = OutlinedTextFieldDefaults.colors(disabledTextColor = Color.Black, disabledBorderColor = Color.Gray, disabledLabelColor = Color.Gray),
++                            modifier = Modifier.fillMaxWidth(),
++                            trailingIcon = { Icon(Icons.Default.DateRange, contentDescription = "تاريخ", tint = PosTealHeader) }
++                        )
++                    }
+                     Text("يتم تحديد المبلغ تلقائياً بعد حفظ الفاتورة.", fontSize = 12.sp, color = Color.Gray)

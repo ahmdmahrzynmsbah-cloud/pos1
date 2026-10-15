@@ -1,0 +1,57 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Stylized capital 'K' in center (dark corporate blue) -->
+    <path
+        android:fillColor="#1E3A8A"
+        android:pathData="M44,30 L48,30 L48,70 L44,70 Z" />
+    <path
+        android:fillColor="#1E3A8A"
+        android:pathData="M48,50 L64,31 L69,31 L51,53 Z" />
+    <path
+        android:fillColor="#1E3A8A"
+        android:pathData="M48,50 L52,46 L70,68 L65,68 Z" />
+
+    <!-- Circular orbit line wrapping around 'K' (royal blue) -->
+    <path
+        android:strokeColor="#1E3A8A"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M38,36 C24,44 22,66 36,76 C46,83 62,81 72,72" />
+
+    <!-- Four-pointed star sparkle in top right (royal blue) -->
+    <path
+        android:fillColor="#1E3A8A"
+        android:pathData="M78,22 Q78,27 83,27 Q78,27 78,32 Q78,27 73,27 Q78,27 78,22 Z" />
+
+    <!-- 3-Bar Financial Chart in bottom right (electric gradient blues) -->
+    <!-- Bar 1 -->
+    <path
+        android:fillColor="#60A5FA"
+        android:pathData="M69,63h4v9h-4z" />
+    <!-- Bar 2 -->
+    <path
+        android:fillColor="#3B82F6"
+        android:pathData="M76,53h4v19h-4z" />
+    <!-- Bar 3 -->
+    <path
+        android:fillColor="#1D4ED8"
+        android:pathData="M83,41h4v31h-4z" />
+
+    <!-- Growth and success arrow sweeping up and right (medium blue) -->
+    <path
+        android:strokeColor="#3B82F6"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M38,70 C50,71 66,66 82,44" />
+    <!-- Arrowhead at (82, 44) pointing top-right -->
+    <path
+        android:fillColor="#3B82F6"
+        android:pathData="M82,44 L76,48 L84,40 L84,49 Z" />
+
+</vector>

@@ -1,0 +1,26 @@
+--- app/src/main/java/com/example/data/AppDao.kt
++++ app/src/main/java/com/example/data/AppDao.kt
+@@ -165,4 +165,24 @@
+     @Delete
+     suspend fun deleteCustomerTransaction(tx: CustomerTransaction)
++
++    // --- Employees ---
++    @Query("SELECT * FROM employees ORDER BY name ASC")
++    fun getAllEmployees(): Flow<List<Employee>>
++
++    @Insert(onConflict = OnConflictStrategy.REPLACE)
++    suspend fun insertEmployee(employee: Employee): Long
++
++    @Update
++    suspend fun updateEmployee(employee: Employee)
++
++    @Query("UPDATE employees SET balance = balance + :balanceDelta WHERE id = :id")
++    suspend fun updateEmployeeBalance(id: Int, balanceDelta: Double)
++
++    // --- Expenses ---
++    @Query("SELECT * FROM expenses ORDER BY date DESC")
++    fun getAllExpenses(): Flow<List<Expense>>
++
++    @Insert(onConflict = OnConflictStrategy.REPLACE)
++    suspend fun insertExpense(expense: Expense): Long
+ }

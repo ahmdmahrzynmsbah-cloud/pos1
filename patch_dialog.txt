@@ -1,0 +1,56 @@
+--- app/src/main/java/com/example/ui/InvoiceFormScreen.kt
++++ app/src/main/java/com/example/ui/InvoiceFormScreen.kt
+@@ -1708,6 +1708,57 @@
+         )
+     }
++
++    if (showCheckDetailsDialog) {
++        AlertDialog(
++            onDismissRequest = { showCheckDetailsDialog = false },
++            title = { Text("تفاصيل الشيك", fontWeight = FontWeight.Bold) },
++            text = {
++                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
++                    OutlinedTextField(
++                        value = checkNumberInput,
++                        onValueChange = { checkNumberInput = it },
++                        label = { Text("رقم الشيك") },
++                        singleLine = true,
++                        modifier = Modifier.fillMaxWidth(),
++                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
++                    )
++                    OutlinedTextField(
++                        value = checkBankNameInput,
++                        onValueChange = { checkBankNameInput = it },
++                        label = { Text("اسم البنك") },
++                        singleLine = true,
++                        modifier = Modifier.fillMaxWidth()
++                    )
++                    OutlinedTextField(
++                        value = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault()).format(java.util.Date(checkDateInput)),
++                        onValueChange = { },
++                        label = { Text("تاريخ الاستلام") },
++                        readOnly = true,
++                        modifier = Modifier.fillMaxWidth(),
++                        trailingIcon = { Icon(Icons.Default.DateRange, contentDescription = "تاريخ") }
++                    )
++                    Text("يتم تحديد المبلغ تلقائياً بعد حفظ الفاتورة.", fontSize = 12.sp, color = Color.Gray)
++                }
++            },
++            confirmButton = {
++                Button(onClick = {
++                    showCheckDetailsDialog = false
++                    performActualSave(checkNumberInput.takeIf { it.isNotBlank() }, checkBankNameInput.takeIf { it.isNotBlank() }, checkDateInput)
++                }) {
++                    Text("حفظ الفاتورة", color = Color.White)
++                }
++            },
++            dismissButton = {
++                TextButton(onClick = { showCheckDetailsDialog = false }) {
++                    Text("إلغاء")
++                }
++            }
++        )
++    }
+ }
+ 
+ // INVOICE ITEM ROW COMPONENT (Matching screenshot item row layout)

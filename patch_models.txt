@@ -1,0 +1,26 @@
+--- app/src/main/java/com/example/data/Models.kt
++++ app/src/main/java/com/example/data/Models.kt
+@@ -155,3 +155,23 @@
+     val reference: String,
+     val invoiceId: Int? = null
+ )
++
++@Entity(tableName = "employees")
++data class Employee(
++    @PrimaryKey(autoGenerate = true) val id: Int = 0,
++    val name: String = "",
++    val phone: String = "",
++    val role: String = "",
++    val salary: Double = 0.0,
++    val balance: Double = 0.0
++)
++
++@Entity(tableName = "expenses")
++data class Expense(
++    @PrimaryKey(autoGenerate = true) val id: Int = 0,
++    val type: String = "أخرى", // "رواتب وأجور", "إيجار", "كهرباء", "مياه", "أخرى"
++    val amount: Double = 0.0,
++    val date: Long = System.currentTimeMillis(),
++    val employeeId: Int? = null,
++    val notes: String = ""
++)

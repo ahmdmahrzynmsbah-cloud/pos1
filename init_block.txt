@@ -1,0 +1,201 @@
+            }
+        }
+    }
+
+    init {
+        loadBranches()
+        val defaultProj = "project-0085a85d-f44a-4bfb-966"
+        val defaultKey = "AIzaSyAluuuhYseJLdaTyFUXnZ2OCg0QYkD9y-I"
+        val defaultUrl = "https://project-0085a85d-f44a-4bfb-966.firebaseio.com"
+
+        var proj = prefs.getString("firebase_project_id", "") ?: ""
+        var key = prefs.getString("firebase_web_api_key", "") ?: ""
+        var url = prefs.getString("firebase_database_url", "") ?: ""
+
+        if (proj.isBlank() || key.isBlank() || url.isBlank() || proj == "fox-tech-pos-cloud") {
+            proj = defaultProj
+            key = defaultKey
+            url = defaultUrl
+            prefs.edit()
+                .putString("firebase_project_id", proj)
+                .putString("firebase_web_api_key", key)
+                .putString("firebase_database_url", url)
+                .apply()
+        }
+
+        firebaseProjectId.value = proj
+        firebaseWebApiKey.value = key
+        firebaseDatabaseUrl.value = url
+        lastSyncTime.value = prefs.getString("last_sync_time", "لم يتم المزامنة بعد") ?: "لم يتم المزامنة بعد"
+
+        // Restore custom customers and suppliers from local SharedPreferences backup on startup
+        restoreCustomersFromBackup()
+        restoreSuppliersFromBackup()
+
+
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            currentUserAccount.collect { user ->
+                if (user != null && user.role != "ADMIN") {
+                    val sysUser = repository.getSystemUserById(user.uid)
+                    if (sysUser != null) {
+                        val isExpired = sysUser.trialEndDate != null && System.currentTimeMillis() > sysUser.trialEndDate!!
+                        if (isExpired && !sysUser.isSubscribed) {
+                            // Expired
+                            viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                                logoutSystem()
+                                _authState.value = AuthState.Error("عذراً، لقد انتهت فترة اشتراكك (10 أيام). يرجى الاشتراك للمتابعة.")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+
+        // Observe and backup customers and suppliers continuously
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                allCustomers.collect { customers ->
+                    backupAllCustomers(customers)
+                }
+            } catch (e: Exception) {
+                Log.e("BackupCollect", "Failed to collect and backup customers", e)
+            }
+        }
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                allSuppliers.collect { suppliers ->
+                    backupAllSuppliers(suppliers)
+                }
+            } catch (e: Exception) {
+                Log.e("BackupCollect", "Failed to collect and backup suppliers", e)
+            }
+        }
+
+        // Auto cloud synchronization on startup - safely run only if logged-in user is non-null
+        viewModelScope.launch {
+            try {
+                kotlinx.coroutines.delay(2000)
+                if (currentUserAccount.value != null) {
+                    syncWithCloud()
+                }
+            } catch (e: Exception) {
+                Log.e("StartupSync", "Failed auto synchronization on startup", e)
+            }
+        }
+
+        // Load saved session with high-resiliency try-catch and cleanup on failure
+        viewModelScope.launch {
+            try {
+                val savedUid = prefs.getString("logged_in_uid", null)
+                val savedRole = prefs.getString("logged_in_role", null)
+                if (savedUid != null && savedRole != null) {
+                    if (savedRole == "ADMIN" && savedUid == "admin1") {
+                        loginAs(UserAccount(uid = "admin1", name = "مدير النظام", phone = "01000000000", role = "ADMIN"))
+                    } else {
+                        val systemUser = repository.getSystemUserById(savedUid)
+                        if (systemUser != null && systemUser.isActive) {
+                            loginAs(UserAccount(uid = systemUser.uid, name = systemUser.name, phone = systemUser.phone, role = systemUser.role))
+                        } else {
+                            // Clear stale session details to allow clean authentication
+                            logoutSystem()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("SessionLoad", "Failed to restore saved session safely", e)
+                try {
+                    logoutSystem() // Reset preference states on corruption/error
+                } catch (ex: Exception) {
+                    Log.e("SessionLoad", "Failed to logout safely", ex)
+                }
+            }
+        }
+
+        // Reactively update subscriptionStatus and user settings based on logged-in user and database updates
+        viewModelScope.launch {
+            try {
+                combine(currentUserAccount, repository.allSystemUsers) { account, users ->
+                    Pair(account, users)
+                }.collect { (account, users) ->
+                    try {
+                        if (account == null) {
+                            subscriptionStatus.value = "ACTIVE"
+                        } else if (account.role == "ADMIN") {
+                            subscriptionStatus.value = "ACTIVE"
+                        } else {
+                            val systemUser = users.find { it.uid == account.uid }
+                            if (systemUser != null) {
+                                val status = when {
+                                    !systemUser.isActive -> "EXPIRED"
+                                    systemUser.isSubscribed -> "ACTIVE"
+                                    isTrialExpired(systemUser) -> "EXPIRED"
+                                    else -> "TRIAL"
+                                }
+                                subscriptionStatus.value = status
+                                
+                                // Load customized settings reactively
+                                storeName.value = systemUser.storeName
+                                storePhone.value = systemUser.storePhone
+                                storeVatNumber.value = systemUser.storeVatNumber
+                                currentBranch.value = systemUser.currentBranch
+                                currencySymbol.value = systemUser.currencySymbol
+                                currentUser.value = systemUser.cashierName
+                                cashierPhone.value = systemUser.cashierPhone
+                                cashierAddress.value = systemUser.cashierAddress
+                            } else {
+                                subscriptionStatus.value = "ACTIVE"
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("UserSettingsCollect", "Failed during user state emission process", e)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("UserSettingsCombine", "Failed to collect system user updates reactively", e)
+            }
+        }
+    }
+
+    // --- POS Search & Category Filter ---
+    private val _authState = kotlinx.coroutines.flow.MutableStateFlow<AuthState>(AuthState.Idle)
+    val authState = _authState.asStateFlow()
+    fun loginAs(account: com.example.data.UserAccount) { 
+        _currentUserAccount.value = account
+        currentUser.value = account.name
+        currentUserRole.value = if (account.role == "ADMIN") "مدير النظام" else "كاشير"
+        prefs.edit().putString("logged_in_uid", account.uid).putString("logged_in_role", account.role).apply()
+    }
+    fun getProductSalesHistory(productId: Int): Flow<List<ProductSaleHistory>> {
+        return repository.getProductSalesHistory(productId)
+    }
+
+    fun getAuditLogsForProduct(productName: String): Flow<List<AuditLog>> {
+        return repository.getAuditLogsForProduct(productName)
+    }
+
+
+    fun checkpointDatabase() {
+        try {
+            val cursor = database.query(androidx.sqlite.db.SimpleSQLiteQuery("pragma wal_checkpoint(full)"))
+            cursor.close()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun closeDatabase() {
+        try {
+            if (database.isOpen) {
+                database.close()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    suspend fun exportFullBackup(context: android.content.Context, uri: android.net.Uri): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        try {
+            checkpointDatabase()
+            
+            val backupObj = org.json.JSONObject()

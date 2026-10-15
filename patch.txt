@@ -1,0 +1,50 @@
+--- app/src/main/java/com/example/ui/InvoiceFormScreen.kt
++++ app/src/main/java/com/example/ui/InvoiceFormScreen.kt
+@@ -165,7 +165,10 @@
+         }
+     }
+ 
+-    // Save Invoice Logic (Preserves cart so user can view/print before starting new invoice)
+-    val onSaveInvoice = {
+-        if (cart.isEmpty()) {
+-            val msg = if (isPurchaseMode) "السلة فارغة! يرجى إضافة عناصر لفاتورة الشراء أولاً 🛒" else "السلة فارغة! يرجى إضافة عناصر للفاتورة أولاً 🛒"
+-            viewModel.showToast(msg)
+-        } else {
+-            if (isPurchaseMode) {
+-                viewModel.performPurchaseCheckout(
+-                    paymentMethod = paymentMethod,
+-                    paidAmount = total,
+-                    clearCartAfter = false,
+-                    isReturnMode = isReturnMode,
+-                    onSuccess = { createdInvoice ->
+-                        lastSavedInvoice = createdInvoice
+-                        lastSavedItems = cart.toList()
+-                        viewModel.showToast("تم حفظ فاتورة الشراء وتوريد البضاعة للمخزن بنجاح وتظهر الآن في الفواتير السابقة! 💾")
+-                    }
+-                )
+-            } else {
+-                val createdInvoice = Invoice(
+-                    id = 0, // Auto-generated
+-                    customerId = selectedCustomerId ?: 0,
+-                    invoiceDate = System.currentTimeMillis(),
+-                    total = total,
+-                    discount = discount,
+-                    paidAmount = if (paymentMethod == "آجل") 0.0 else total,
+-                    paymentMethod = paymentMethod
+-                )
+-
+-                viewModel.performCheckout(
+-                    paymentMethod = paymentMethod,
+-                    paidAmount = total,
+-                    changeAmount = 0.0,
+-                    clearCartAfter = false, // Do NOT clear cart automatically!
+-                    isReturnMode = isReturnMode,
+-                    onSuccess = {
+-                        lastSavedInvoice = createdInvoice
+-                        lastSavedItems = cart.toList()
+-                        viewModel.showToast("تم حفظ الفاتورة بنجاح وتظهر الآن في قائمة الفواتير السابقة! 💾")
+-                    }
+-                )
+-            }
+-        }
+-    }
