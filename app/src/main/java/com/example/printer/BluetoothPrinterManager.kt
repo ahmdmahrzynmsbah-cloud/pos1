@@ -351,9 +351,10 @@ class BluetoothPrinterManager(private val context: Context) {
         centerPaint.textSize = 18f
         centerPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
         canvas.drawText("الهاتف: $storePhone", width / 2f, y, centerPaint)
-        y += 26f
-        canvas.drawText("الرقم الضريبي: $storeVatNumber", width / 2f, y, centerPaint)
-        y += 26f
+        if (storeVatNumber.isNotBlank()) {
+            canvas.drawText("الرقم الضريبي: $storeVatNumber", width / 2f, y, centerPaint)
+            y += 26f
+        }
         canvas.drawText("الفرع: $currentBranch", width / 2f, y, centerPaint)
         y += 28f
 
@@ -363,7 +364,14 @@ class BluetoothPrinterManager(private val context: Context) {
 
         // Invoice Meta
         rightPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        canvas.drawText("فاتورة رقم: #${invoice.id}", width - 10f, y, rightPaint)
+        val isReturn = invoice.total < 0 || invoice.subtotal < 0
+        val invTitle = when {
+            isReturn && invoice.isPurchase -> "فاتورة مرتجع مشتريات #${invoice.id}"
+            isReturn -> "فاتورة مرتجع مبيعات #${invoice.id}"
+            invoice.isPurchase -> "فاتورة مشتريات #${invoice.id}"
+            else -> "فاتورة مبيعات #${invoice.id}"
+        }
+        canvas.drawText(invTitle, width - 10f, y, rightPaint)
         val sdf = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.getDefault())
         leftPaint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
         canvas.drawText(sdf.format(Date(invoice.invoiceDate)), 10f, y, leftPaint)

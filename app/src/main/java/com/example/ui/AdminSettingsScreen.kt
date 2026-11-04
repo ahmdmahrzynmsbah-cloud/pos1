@@ -259,27 +259,16 @@ fun AdminSettingsScreen(
                         supportingText = { Text("إذا تُرك فارغاً أو تم اختيار نمط أعلاه، سيتم استخدام الأيقونة الجاهزة.") }
                     )
 
-                    // Phone & VAT
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = editStorePhone,
-                            onValueChange = { editStorePhone = it },
-                            label = { Text("هاتف المنشأة:") },
-                            placeholder = { Text("05xxxxxxxx") },
-                            leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = editStoreVatNumber,
-                            onValueChange = { editStoreVatNumber = it },
-                            label = { Text("الرقم الضريبي:") },
-                            placeholder = { Text("300xxxxxxx") },
-                            leadingIcon = { Icon(Icons.Default.Pin, contentDescription = null) },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
+                    // Phone
+                    OutlinedTextField(
+                        value = editStorePhone,
+                        onValueChange = { editStorePhone = it },
+                        label = { Text("هاتف المنشأة:") },
+                        placeholder = { Text("05xxxxxxxx") },
+                        leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
 
@@ -539,9 +528,6 @@ fun AdminSettingsScreen(
                         ) {
                             Text("=== ترويسة الفاتورة التجريبية ===", fontSize = 10.sp, color = Color.Gray)
                             Text(editStoreName.ifBlank { "مؤسسة الكنز للمحاسبة" }, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                            if (editStoreVatNumber.isNotBlank()) {
-                                Text("الرقم الضريبي: $editStoreVatNumber", fontSize = 11.sp)
-                            }
                             if (editStorePhone.isNotBlank()) {
                                 Text("هاتف: $editStorePhone", fontSize = 11.sp)
                             }

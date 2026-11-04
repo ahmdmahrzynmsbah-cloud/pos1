@@ -53,6 +53,7 @@ enum class TxCategory(val label: String, val icon: ImageVector, val color: Color
     ALL("كافة المعاملات", Icons.Default.ReceiptLong, Color(0xFF2563EB)),
     SALES("فواتير المبيعات", Icons.Default.ShoppingCart, Color(0xFF10B981)),
     PURCHASES("فواتير المشتريات", Icons.Default.LocalShipping, Color(0xFF0284C7)),
+    RETURNS("فواتير المرتجعات", Icons.Default.PublishedWithChanges, Color(0xFFDC2626)),
     CUSTOMER_PAYMENTS("مقبوضات ودفعات العملاء", Icons.Default.Payments, Color(0xFF059669)),
     SUPPLIER_PAYMENTS("سداد دفعات الموردين", Icons.Default.PriceCheck, Color(0xFFD97706)),
     EXPENSES("المصروفات والرواتب", Icons.Default.AccountBalanceWallet, Color(0xFFDC2626)),
@@ -108,23 +109,25 @@ fun TransactionsHistoryScreen(
     val allUnifiedItems = remember(invoices, customerTxs, supplierTxs, expenses, auditLogs, customers, suppliers, employees) {
         val list = mutableListOf<UnifiedTxItem>()
 
-        // 1. Invoices (Sales & Purchases)
+        // 1. Invoices (Sales, Purchases, and Returns)
         invoices.filter { !it.isDraft }.forEach { inv ->
+            val isReturn = inv.total < 0 || inv.subtotal < 0
+            val absTotal = kotlin.math.abs(inv.total)
             if (inv.isPurchase) {
                 val sup = suppliers.find { it.id == inv.customerId }
                 list.add(
                     UnifiedTxItem(
                         id = "INV-P-${inv.id}",
-                        category = TxCategory.PURCHASES,
-                        title = "فاتورة مشتريات #${inv.id}",
+                        category = if (isReturn) TxCategory.RETURNS else TxCategory.PURCHASES,
+                        title = if (isReturn) "فاتورة مرتجع مشتريات #${inv.id}" else "فاتورة مشتريات #${inv.id}",
                         partyName = sup?.name ?: "مورد غير محدد",
-                        amount = inv.total,
-                        isIncoming = false,
+                        amount = absTotal,
+                        isIncoming = if (isReturn) true else false,
                         timestamp = inv.invoiceDate,
                         paymentMethod = inv.paymentMethod.ifBlank { "نقدي" },
                         branchName = inv.branchName,
                         cashierName = inv.cashierName,
-                        notes = "الضريبة: ${String.format(Locale.US, "%.2f", inv.taxAmount)} • الخصم: ${String.format(Locale.US, "%.2f", inv.discount)}",
+                        notes = "${if (isReturn) "مرتجع مشتريات • " else ""}الضريبة: ${String.format(Locale.US, "%.2f", inv.taxAmount)} • الخصم: ${String.format(Locale.US, "%.2f", inv.discount)}",
                         rawInvoice = inv
                     )
                 )
@@ -133,16 +136,16 @@ fun TransactionsHistoryScreen(
                 list.add(
                     UnifiedTxItem(
                         id = "INV-S-${inv.id}",
-                        category = TxCategory.SALES,
-                        title = "فاتورة مبيعات #${inv.id}",
+                        category = if (isReturn) TxCategory.RETURNS else TxCategory.SALES,
+                        title = if (isReturn) "فاتورة مرتجع مبيعات #${inv.id}" else "فاتورة مبيعات #${inv.id}",
                         partyName = cust?.name ?: "زبون نقدي عام",
-                        amount = inv.total,
-                        isIncoming = true,
+                        amount = absTotal,
+                        isIncoming = if (isReturn) false else true,
                         timestamp = inv.invoiceDate,
                         paymentMethod = inv.paymentMethod.ifBlank { "نقدي" },
                         branchName = inv.branchName,
                         cashierName = inv.cashierName,
-                        notes = "الضريبة: ${String.format(Locale.US, "%.2f", inv.taxAmount)} • الخصم: ${String.format(Locale.US, "%.2f", inv.discount)}",
+                        notes = "${if (isReturn) "مرتجع مبيعات • " else ""}الضريبة: ${String.format(Locale.US, "%.2f", inv.taxAmount)} • الخصم: ${String.format(Locale.US, "%.2f", inv.discount)}",
                         rawInvoice = inv
                     )
                 )
@@ -316,13 +319,16 @@ fun TransactionsHistoryScreen(
     val totalPurchases = remember(filteredByDateItems) {
         filteredByDateItems.filter { it.category == TxCategory.PURCHASES }.sumOf { it.amount }
     }
+    val totalReturns = remember(filteredByDateItems) {
+        filteredByDateItems.filter { it.category == TxCategory.RETURNS }.sumOf { it.amount }
+    }
     val totalCustomerReceipts = remember(filteredByDateItems) {
         filteredByDateItems.filter { it.category == TxCategory.CUSTOMER_PAYMENTS }.sumOf { it.amount }
     }
     val totalExpenses = remember(filteredByDateItems) {
         filteredByDateItems.filter { it.category == TxCategory.EXPENSES }.sumOf { it.amount }
     }
-    val netCashFlow = (totalSales + totalCustomerReceipts) - (totalPurchases + totalExpenses)
+    val netCashFlow = (totalSales + totalCustomerReceipts) - (totalPurchases + totalExpenses + totalReturns)
 
     val dateFormat = remember { SimpleDateFormat("yyyy/MM/dd  hh:mm a", Locale("ar")) }
 
@@ -478,6 +484,16 @@ fun TransactionsHistoryScreen(
                         count = filteredByDateItems.count { it.category == TxCategory.PURCHASES },
                         color = Color(0xFF0284C7),
                         icon = Icons.Default.LocalShipping
+                    )
+                }
+                item {
+                    MetricMiniCard(
+                        title = "المرتجعات",
+                        amount = totalReturns,
+                        currency = currencySymbol,
+                        count = filteredByDateItems.count { it.category == TxCategory.RETURNS },
+                        color = Color(0xFFDC2626),
+                        icon = Icons.Default.PublishedWithChanges
                     )
                 }
                 item {

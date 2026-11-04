@@ -56,6 +56,9 @@ data class Invoice(
     val isDraft: Boolean = false
 )
 
+val Invoice.isReturn: Boolean
+    get() = total < 0 || subtotal < 0
+
 @Entity(tableName = "banks")
 data class Bank(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,

@@ -75,6 +75,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
   val allSupplierTransactions = repository.allSupplierTransactions
   val allCustomerTransactions = repository.allCustomerTransactions
   val allFeedbacks = repository.allFeedbacks
+  var activePrintWebView: android.webkit.WebView? = null
 
   fun submitFeedback(
     senderName: String,
@@ -877,31 +878,110 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
   val taxPercent = MutableStateFlow(15.0)
 
+  val damagedCreditAccount = MutableStateFlow<String?>(null)
+
   // --- Customer & Supplier System ---
   private val _selectedCustomerId = MutableStateFlow<Int?>(null)
   val selectedCustomerId = _selectedCustomerId.asStateFlow()
+
+  private val _selectedCustomer = MutableStateFlow<Customer?>(null)
+  val selectedCustomer = _selectedCustomer.asStateFlow()
 
   private val _manualCustomerName = MutableStateFlow<String>("")
   val manualCustomerName = _manualCustomerName.asStateFlow()
 
   fun setManualCustomerName(name: String) {
     _manualCustomerName.value = name
+    if (name.isNotBlank()) {
+      _selectedCustomerId.value = null
+      _selectedCustomer.value = null
+    }
+  }
+
+  fun selectCustomer(id: Int?, customer: Customer? = null) {
+    _selectedCustomerId.value = id
+    _selectedCustomer.value = customer
+    if (id != null) {
+      _manualCustomerName.value = ""
+      if (customer == null) {
+        viewModelScope.launch {
+          _selectedCustomer.value = repository.allCustomers.first().find { it.id == id }
+        }
+      }
+    }
   }
 
   private val _selectedSupplierId = MutableStateFlow<Int?>(null)
   val selectedSupplierId = _selectedSupplierId.asStateFlow()
 
+  private val _selectedSupplier = MutableStateFlow<Supplier?>(null)
+  val selectedSupplier = _selectedSupplier.asStateFlow()
+
   private val _manualSupplierName = MutableStateFlow<String>("")
   val manualSupplierName = _manualSupplierName.asStateFlow()
 
-  fun setSelectedSupplier(id: Int?) {
+  fun setSelectedSupplier(id: Int?, supplier: Supplier? = null) {
     _selectedSupplierId.value = id
-    _manualSupplierName.value = ""
+    _selectedSupplier.value = supplier
+    if (id != null) {
+      _manualSupplierName.value = ""
+      if (supplier == null) {
+        viewModelScope.launch {
+          _selectedSupplier.value = repository.allSuppliers.first().find { it.id == id }
+        }
+      }
+    }
   }
 
   fun setManualSupplierName(name: String) {
     _manualSupplierName.value = name
-    _selectedSupplierId.value = null
+    if (name.isNotBlank()) {
+      _selectedSupplierId.value = null
+      _selectedSupplier.value = null
+    }
+  }
+
+  fun addSupplierAndSelect(name: String, onDone: () -> Unit = {}) {
+    viewModelScope.launch {
+      val trimmed = name.trim()
+      val newId = repository.insertSupplier(Supplier(name = trimmed))
+      val newSup = Supplier(id = newId.toInt(), name = trimmed)
+      setSelectedSupplier(newSup.id, newSup)
+      setManualSupplierName("")
+      showToast("تم حفظ واختيار المورد: $trimmed بنجاح")
+      onDone()
+    }
+  }
+
+  fun addCustomerAndSelect(name: String, onDone: () -> Unit = {}) {
+    viewModelScope.launch {
+      val trimmed = name.trim()
+      val newId = repository.insertCustomer(Customer(name = trimmed), currentUser.value)
+      val newCust = Customer(id = newId.toInt(), name = trimmed)
+      selectCustomer(newCust.id, newCust)
+      setManualCustomerName("")
+      showToast("تم حفظ واختيار العميل: $trimmed بنجاح")
+      onDone()
+    }
+  }
+
+  // --- Statement Redirection / Navigation Targets ---
+  val targetStatementCustomer = MutableStateFlow<Customer?>(null)
+  val targetStatementSupplier = MutableStateFlow<Supplier?>(null)
+
+  fun navigateToCustomerStatement(customer: Customer) {
+    targetStatementCustomer.value = customer
+    targetStatementSupplier.value = null
+  }
+
+  fun navigateToSupplierStatement(supplier: Supplier) {
+    targetStatementSupplier.value = supplier
+    targetStatementCustomer.value = null
+  }
+
+  fun clearStatementTargets() {
+    targetStatementCustomer.value = null
+    targetStatementSupplier.value = null
   }
 
   // --- Toast Notification Feedback State ---
@@ -1343,19 +1423,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
   }
 
-  fun clearCart() {
+  fun clearCart(keepParty: Boolean = false) {
     _cart.value = emptyList()
     _discount.value = 0.0
-    _selectedCustomerId.value = null
-    _manualCustomerName.value = ""
+    if (!keepParty) {
+      _selectedCustomerId.value = null
+      _selectedCustomer.value = null
+      _manualCustomerName.value = ""
+      _selectedSupplierId.value = null
+      _selectedSupplier.value = null
+      _manualSupplierName.value = ""
+    }
+    setupPaymentMethod.value = "نقدي"
+    setupCheckNumber.value = ""
+    setupCheckBankName.value = ""
+    setupCheckDate.value = System.currentTimeMillis()
+    setupCustomDate.value = null
   }
 
   fun setDiscount(amount: Double) {
     _discount.value = amount
-  }
-
-  fun selectCustomer(id: Int?) {
-    _selectedCustomerId.value = id
   }
 
   fun showToast(message: String) {
@@ -1662,18 +1749,157 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     debitAccount: String,
     creditAccount: String,
     amount: Double,
-    onSuccess: ((LedgerEntry) -> Unit)? = null
+    onSuccess: ((LedgerEntry) -> Unit)? = null,
+    onError: ((String) -> Unit)? = null
   ) {
     viewModelScope.launch {
-      val entry = LedgerEntry(
-        description = description,
-        debitAccount = debitAccount,
-        creditAccount = creditAccount,
-        amount = amount
-      )
-      repository.insertLedgerEntry(entry)
-      showToast("تم تسجيل القيد المحاسبي اليدوي بنجاح.")
-      onSuccess?.invoke(entry)
+      try {
+        val employeesList = repository.allEmployees.first()
+        val cleanDebit = debitAccount.trim()
+        val cleanCredit = creditAccount.trim()
+
+        val matchedEmpDebit = employeesList.firstOrNull { 
+          it.name.trim().equals(cleanDebit, ignoreCase = true) ||
+          cleanDebit.contains(it.name.trim(), ignoreCase = true) ||
+          it.name.trim().contains(cleanDebit, ignoreCase = true)
+        }
+        val matchedEmpCredit = employeesList.firstOrNull { 
+          it.name.trim().equals(cleanCredit, ignoreCase = true) ||
+          cleanCredit.contains(it.name.trim(), ignoreCase = true) ||
+          it.name.trim().contains(cleanCredit, ignoreCase = true)
+        }
+        val matchedEmp = matchedEmpDebit ?: matchedEmpCredit ?: employeesList.firstOrNull { emp ->
+          emp.name.trim().isNotBlank() && description.contains(emp.name.trim(), ignoreCase = true)
+        }
+
+        val entry = LedgerEntry(
+          description = description,
+          debitAccount = debitAccount,
+          creditAccount = creditAccount,
+          amount = amount,
+          employeeId = matchedEmp?.id
+        )
+        val newId = repository.insertLedgerEntry(entry)
+        val savedEntry = entry.copy(id = newId.toInt())
+
+        // Check if accounts correspond to Customers
+        val customersList = repository.allCustomers.first()
+        val matchedCustCredit = customersList.firstOrNull { it.name.trim().equals(cleanCredit, ignoreCase = true) }
+        val matchedCustDebit = customersList.firstOrNull { it.name.trim().equals(cleanDebit, ignoreCase = true) }
+
+        if (matchedCustCredit != null) {
+          repository.insertCustomerTransaction(
+            CustomerTransaction(
+              customerId = matchedCustCredit.id,
+              date = System.currentTimeMillis(),
+              transactionType = "دفعة",
+              amount = amount,
+              note = description
+            )
+          )
+        } else if (matchedCustDebit != null) {
+          repository.insertCustomerTransaction(
+            CustomerTransaction(
+              customerId = matchedCustDebit.id,
+              date = System.currentTimeMillis(),
+              transactionType = "صرف",
+              amount = amount,
+              note = description
+            )
+          )
+        }
+
+        // Check if accounts correspond to Suppliers
+        val suppliersList = repository.allSuppliers.first()
+        val matchedSuppDebit = suppliersList.firstOrNull { it.name.trim().equals(cleanDebit, ignoreCase = true) }
+        val matchedSuppCredit = suppliersList.firstOrNull { it.name.trim().equals(cleanCredit, ignoreCase = true) }
+
+        if (matchedSuppDebit != null) {
+          repository.insertSupplierTransaction(
+            SupplierTransaction(
+              supplierId = matchedSuppDebit.id,
+              date = System.currentTimeMillis(),
+              transactionType = "دفعة",
+              amount = amount,
+              note = description
+            )
+          )
+        } else if (matchedSuppCredit != null) {
+          repository.insertSupplierTransaction(
+            SupplierTransaction(
+              supplierId = matchedSuppCredit.id,
+              date = System.currentTimeMillis(),
+              transactionType = "شراء",
+              amount = amount,
+              note = description
+            )
+          )
+        }
+
+        // Apply balance update & expenses to matched Employee if any
+        if (matchedEmpDebit != null) {
+          repository.updateEmployeeBalance(matchedEmpDebit.id, -amount)
+          // If cash or bank was credited, record as Expense so it appears in expenses reports as well
+          if (cleanCredit.contains("الصندوق") || cleanCredit.contains("البنك") || description.contains("سند صرف")) {
+            val exp = Expense(
+              date = System.currentTimeMillis(),
+              type = "موظف: ${matchedEmpDebit.name}",
+              amount = amount,
+              notes = description,
+              employeeId = matchedEmpDebit.id,
+              paymentMethod = if (cleanCredit.contains("البنك")) "تحويل بنكي" else "الصندوق",
+              partyType = "موظف",
+              partyName = matchedEmpDebit.name
+            )
+            repository.insertExpense(exp)
+          }
+        } else if (matchedEmpCredit != null) {
+          repository.updateEmployeeBalance(matchedEmpCredit.id, amount)
+        } else if (matchedEmp != null) {
+          if (cleanCredit.contains("الصندوق") || cleanCredit.contains("البنك") || description.contains("سند صرف")) {
+            repository.updateEmployeeBalance(matchedEmp.id, -amount)
+            val exp = Expense(
+              date = System.currentTimeMillis(),
+              type = "موظف: ${matchedEmp.name}",
+              amount = amount,
+              notes = description,
+              employeeId = matchedEmp.id,
+              paymentMethod = if (cleanCredit.contains("البنك")) "تحويل بنكي" else "الصندوق",
+              partyType = "موظف",
+              partyName = matchedEmp.name
+            )
+            repository.insertExpense(exp)
+          } else if (cleanDebit.contains("الصندوق") || cleanDebit.contains("البنك") || description.contains("سند قبض")) {
+            repository.updateEmployeeBalance(matchedEmp.id, amount)
+          }
+        }
+
+        // Check if debit account is an expense account
+        val isExpenseAccount = cleanDebit.contains("مصروف") || cleanDebit.contains("المصاريف") || cleanDebit.contains("المصروفات") ||
+                               cleanDebit.contains("إيجار") || cleanDebit.contains("تسويق") || cleanDebit.contains("دعاية") ||
+                               cleanDebit.contains("صيانة") || cleanDebit.contains("كهرباء") || cleanDebit.contains("مياه") ||
+                               cleanDebit.contains("نثريات") || cleanDebit.contains("رواتب") || cleanDebit.contains("أجور")
+        if (isExpenseAccount && matchedEmp == null && matchedEmpDebit == null) {
+          val expType = cleanDebit.removePrefix("المصاريف العامة:").removePrefix("المصروفات العامة:").removePrefix("المصاريف:").trim().ifEmpty { "مصروف عام" }
+          val exp = Expense(
+            date = System.currentTimeMillis(),
+            type = expType,
+            amount = amount,
+            notes = description,
+            paymentMethod = if (cleanCredit.contains("البنك")) "تحويل بنكي" else if (cleanCredit.contains("شيك")) "شيك" else "الصندوق",
+            partyType = "مصروف عام",
+            partyName = expType
+          )
+          repository.insertExpense(exp)
+        }
+
+        repository.logAudit(currentUser.value, "سند قيد", "ترحيل قيد: $description بمبلغ $amount من $debitAccount إلى $creditAccount")
+        showToast("تم ترحيل وحفظ سند القيد بنجاح.")
+        onSuccess?.invoke(savedEntry)
+      } catch (e: Exception) {
+        showToast("خطأ أثناء ترحيل السند: ${e.localizedMessage}")
+        onError?.invoke(e.localizedMessage ?: "خطأ أثناء ترحيل السند")
+      }
     }
   }
 
@@ -1774,7 +2000,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     isReturnMode: Boolean = false,
     isDraft: Boolean = false,
     customInvoiceDate: Long? = null,
-    onSuccess: () -> Unit
+    onSuccess: (Invoice) -> Unit = {}
   ) {
     if (_cart.value.isEmpty()) {
       showToast("خطأ: السلة فارغة!")
@@ -1785,7 +2011,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
       try {
         var finalCustomerId = _selectedCustomerId.value
         val manualNameStr = _manualCustomerName.value.trim()
-        if (finalCustomerId == null && manualNameStr.isNotEmpty()) {
+        val sellingToSupplierId = _selectedSupplierId.value
+        val manualSupNameStr = _manualSupplierName.value.trim()
+
+        var isSellingToSupplier = false
+        if (finalCustomerId == null && sellingToSupplierId != null) {
+          // Selling to a supplier
+          finalCustomerId = sellingToSupplierId
+          isSellingToSupplier = true
+        } else if (finalCustomerId == null && manualNameStr.isNotEmpty()) {
           val existing = repository.allCustomers.first().find { it.name.equals(manualNameStr, ignoreCase = true) }
           if (existing != null) {
             finalCustomerId = existing.id
@@ -1801,6 +2035,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
               currentUser.value
             )
             finalCustomerId = newCustId.toInt()
+          }
+        } else if (finalCustomerId == null && manualSupNameStr.isNotEmpty()) {
+          // Fallback to manual supplier name if set
+          val existing = repository.allSuppliers.first().find { it.name.equals(manualSupNameStr, ignoreCase = true) }
+          if (existing != null) {
+            finalCustomerId = existing.id
+            isSellingToSupplier = true
           }
         }
 
@@ -1821,11 +2062,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
           checkDate = checkDate,
           isReturn = isReturnMode,
           isDraft = isDraft,
-          customInvoiceDate = customInvoiceDate
+          customInvoiceDate = customInvoiceDate,
+          isPartySupplier = isSellingToSupplier
         )
 
         _lastCheckedOutInvoice.value = checkedOutInvoice
         _lastCheckedOutItems.value = cartItemsSold
+
+        val damagedAcc = damagedCreditAccount.value
+        if (damagedAcc != null) {
+          val totalAmount = kotlin.math.abs(checkedOutInvoice.total)
+          val expenseEntry = LedgerEntry(
+            date = customInvoiceDate ?: System.currentTimeMillis(),
+            description = "فاتورة تالف (يخصم من: $damagedAcc) - فاتورة #${checkedOutInvoice.id}",
+            debitAccount = "المصاريف",
+            creditAccount = damagedAcc,
+            amount = totalAmount
+          )
+          repository.insertLedgerEntry(expenseEntry)
+          repository.logAudit(currentUser.value, "فاتورة تالف", "تسجيل فاتورة تالف بقيمة $totalAmount وتخصم من $damagedAcc")
+          damagedCreditAccount.value = null
+        }
 
         if (clearCartAfter) {
           clearCart()
@@ -1839,14 +2096,35 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
           } else null
         }
 
+        val invoiceTypeLabel = if (isReturnMode) "فاتورة المرتجع" else "الفاتورة"
         if (lowStockNames.isNotEmpty()) {
-          showToast("تم حفظ الفاتورة #${checkedOutInvoice.id}!  تنبيه حد الطلب المنخفض: ${lowStockNames.joinToString(" ، ")}")
+          showToast("تم حفظ $invoiceTypeLabel #${checkedOutInvoice.id}!  تنبيه حد الطلب المنخفض: ${lowStockNames.joinToString(" ، ")}")
         } else {
-          showToast("تم حفظ الفاتورة بنجاح! فاتورة رقم #${checkedOutInvoice.id} ")
+          showToast("تم حفظ $invoiceTypeLabel بنجاح! رقم #${checkedOutInvoice.id} ")
         }
-        onSuccess()
+        onSuccess(checkedOutInvoice)
       } catch (e: Exception) {
         showToast("حدث خطأ أثناء حفظ الفاتورة: ${e.message}")
+      }
+    }
+  }
+
+  fun toggleInvoiceReturnType(invoiceId: Int, onResult: (Invoice?) -> Unit = {}) {
+    viewModelScope.launch {
+      try {
+        val updated = repository.toggleInvoiceReturnType(invoiceId, currentUser.value)
+        if (updated != null) {
+          val isNowReturn = updated.total < 0 || updated.subtotal < 0
+          val msg = if (isNowReturn) "تم تحويل الفاتورة #${invoiceId} إلى مرتجع بنجاح وتعديل المخزون!" else "تم تحويل الفاتورة #${invoiceId} إلى فاتورة عادية بنجاح وتعديل المخزون!"
+          showToast(msg)
+          onResult(updated)
+        } else {
+          showToast("تعذر العثور على الفاتورة")
+          onResult(null)
+        }
+      } catch (e: Exception) {
+        showToast("خطأ أثناء تعديل نوع الفاتورة: ${e.message}")
+        onResult(null)
       }
     }
   }
@@ -1858,7 +2136,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     checkNumber: String? = null,
     checkBankName: String? = null,
     checkDate: Long? = null,
-    clearCartAfter: Boolean = false,
+    clearCartAfter: Boolean = true,
     isReturnMode: Boolean = false,
     isDraft: Boolean = false,
     customInvoiceDate: Long? = null,
@@ -1873,10 +2151,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
       try {
         var finalSupplierId = _selectedSupplierId.value
         val manualNameStr = _manualSupplierName.value.trim()
-        if (finalSupplierId == null && manualNameStr.isNotEmpty()) {
+        val buyingFromCustomerId = _selectedCustomerId.value
+        val manualCustNameStr = _manualCustomerName.value.trim()
+
+        var finalSupplierName: String = "مورد عام"
+        var isBuyingFromCustomer = false
+
+        if (finalSupplierId != null) {
+          val supplierObj = repository.allSuppliers.first().find { it.id == finalSupplierId }
+          finalSupplierName = supplierObj?.name ?: "مورد مسجل"
+          isBuyingFromCustomer = false
+        } else if (buyingFromCustomerId != null) {
+          // Buying from an existing customer!
+          finalSupplierId = buyingFromCustomerId
+          val custObj = repository.allCustomers.first().find { it.id == buyingFromCustomerId }
+          finalSupplierName = custObj?.name ?: "عميل مسجل"
+          isBuyingFromCustomer = true
+        } else if (manualNameStr.isNotEmpty()) {
           val existing = repository.allSuppliers.first().find { it.name.equals(manualNameStr, ignoreCase = true) }
           if (existing != null) {
             finalSupplierId = existing.id
+            finalSupplierName = existing.name
+            isBuyingFromCustomer = false
           } else {
             val newSupId = repository.insertSupplier(
               com.example.data.Supplier(
@@ -1887,13 +2183,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
               )
             )
             finalSupplierId = newSupId.toInt()
+            finalSupplierName = manualNameStr
+            isBuyingFromCustomer = false
+          }
+        } else if (manualCustNameStr.isNotEmpty()) {
+          val existing = repository.allCustomers.first().find { it.name.equals(manualCustNameStr, ignoreCase = true) }
+          if (existing != null) {
+            finalSupplierId = existing.id
+            finalSupplierName = existing.name
+            isBuyingFromCustomer = true
+          } else {
+            val newCustId = repository.insertCustomer(
+              Customer(name = manualCustNameStr, phone = "يدوي", email = "", points = 0, type = "عادي"),
+              currentUser.value
+            )
+            finalSupplierId = newCustId.toInt()
+            finalSupplierName = manualCustNameStr
+            isBuyingFromCustomer = true
           }
         }
-
-        val supplierObj = if (finalSupplierId != null) {
-          repository.allSuppliers.first().find { it.id == finalSupplierId }
-        } else null
-        val finalSupplierName = supplierObj?.name ?: manualNameStr.ifEmpty { "مورد عام" }
 
         val cartItemsPurchased = _cart.value.toList()
 
@@ -1912,7 +2220,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
           checkDate = checkDate,
           isReturn = isReturnMode,
           isDraft = isDraft,
-          customInvoiceDate = customInvoiceDate
+          customInvoiceDate = customInvoiceDate,
+          isPartyCustomer = isBuyingFromCustomer
         )
 
         _lastCheckedOutInvoice.value = checkedOutInvoice
@@ -2091,7 +2400,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
       <body>
         <div class="header">
           <h1>$store</h1>
-          <p>فرع: $branch | هاتف: $phone | الرقم الضريبي: $vat</p>
+          <p>فرع: $branch | هاتف: $phone${if (vat.isNotBlank()) " | الرقم الضريبي: $vat" else ""}</p>
           <p style="font-weight: bold; color: #2b6cb0; font-size: 16px;">التقرير المالي المفصل للداشبورد والعمليات</p>
           <p>تاريخ الاستخراج: $dateStr | المستخرج: $cashier</p>
         </div>
@@ -2710,7 +3019,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
       <body>
         <div class="header">
           <h1>$store</h1>
-          <p>فرع: $branch | هاتف: $phone | الرقم الضريبي: $vat</p>
+          <p>فرع: $branch | هاتف: $phone${if (vat.isNotBlank()) " | الرقم الضريبي: $vat" else ""}</p>
         </div>
 
         <div class="voucher-title-box">
@@ -2790,14 +3099,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val printManager = context.getSystemService(android.content.Context.PRINT_SERVICE) as? android.print.PrintManager
         if (printManager != null) {
           val webView = android.webkit.WebView(context)
+          activePrintWebView = webView
           webView.loadDataWithBaseURL(null, htmlContent, "text/html", "utf-8", null)
           webView.webViewClient = object : android.webkit.WebViewClient() {
             override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
-              val printAdapter = webView.createPrintDocumentAdapter("سند قيد $voucherNo")
-              printManager.print("سند قيد $voucherNo", printAdapter, android.print.PrintAttributes.Builder().build())
+              try {
+                val printAdapter = webView.createPrintDocumentAdapter("سند قيد $voucherNo")
+                printManager.print("سند قيد $voucherNo", printAdapter, android.print.PrintAttributes.Builder().build())
+              } catch (ex: Exception) {
+                showToast("تعذر استكمال الطباعة: ${ex.localizedMessage}")
+              }
             }
           }
-          showToast("جاري فتح طباعة سند القيد ...")
+          showToast("جاري فتح طباعة سند القيد...")
         } else {
           showToast("نظام الطباعة غير مدعوم على هذا الجهاز.")
         }
@@ -3421,8 +3735,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         
         paint.textAlign = android.graphics.Paint.Align.CENTER
         paint.typeface = fontBold
-        paint.textSize = 18f
-        canvas.drawText("فاتورة مبيعات", 200f, y, paint)
+        val isReturnPdf = invoice.total < 0 || invoice.subtotal < 0
+        val docTitle = when {
+          isReturnPdf && invoice.isPurchase -> "فاتورة مرتجع مشتريات"
+          isReturnPdf -> "فاتورة مرتجع مبيعات"
+          invoice.isPurchase -> "فاتورة مشتريات"
+          else -> "فاتورة مبيعات"
+        }
+        canvas.drawText(docTitle, 200f, y, paint)
         y += 40f
         
         paint.textAlign = android.graphics.Paint.Align.RIGHT
@@ -3529,9 +3849,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     (debitNature + creditNature).forEach { balances[it] = 0.0 }
 
     entries.forEach { entry ->
-      val dAcc = entry.debitAccount
-      val cAcc = entry.creditAccount
+      val rawDAcc = entry.debitAccount
+      val rawCAcc = entry.creditAccount
       val amt = entry.amount
+
+      val isExpAcc = { acc: String ->
+        acc == "المصاريف" || acc.contains("مصروف") || acc.contains("المصاريف") || acc.contains("المصروفات") ||
+        acc.contains("إيجار") || acc.contains("تسويق") || acc.contains("دعاية") || acc.contains("صيانة") ||
+        acc.contains("كهرباء") || acc.contains("مياه") || acc.contains("نثريات") || acc.contains("رواتب") || acc.contains("أجور")
+      }
+
+      val dAcc = if (isExpAcc(rawDAcc)) "المصاريف" else rawDAcc
+      val cAcc = if (isExpAcc(rawCAcc)) "المصاريف" else rawCAcc
 
       if (debitNature.contains(dAcc)) {
         balances[dAcc] = (balances[dAcc] ?: 0.0) + amt
@@ -4386,16 +4715,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
       val array = org.json.JSONArray(jsonStr)
       for (i in 0 until array.length()) {
         val obj = array.getJSONObject(i)
-        list.add(
-          Customer(
-            id = obj.optInt("id", 0),
-            name = obj.optString("name", ""),
-            phone = obj.optString("phone", ""),
-            email = obj.optString("email", ""),
-            points = obj.optInt("points", 0),
-            type = obj.optString("type", "عادي")
+        val name = obj.optString("name", "").trim()
+        if (name.isNotEmpty() && name != "عميل نقدي افتراضي" && name != "عميل نقدي") {
+          list.add(
+            Customer(
+              id = obj.optInt("id", 0),
+              name = name,
+              phone = obj.optString("phone", ""),
+              email = obj.optString("email", ""),
+              points = obj.optInt("points", 0),
+              type = obj.optString("type", "عادي")
+            )
           )
-        )
+        }
       }
     } catch (e: Exception) {
       Log.e("Backup", "Error parsing backed up customers", e)
@@ -4404,10 +4736,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
   }
 
   private fun backupAllCustomers(customers: List<Customer>) {
-    if (customers.isEmpty()) return
+    val realCustomers = customers.filter { it.name.trim() != "عميل نقدي افتراضي" && it.name.trim() != "عميل نقدي" }
     try {
       val array = org.json.JSONArray()
-      customers.forEach { cust ->
+      realCustomers.forEach { cust ->
         val obj = org.json.JSONObject().apply {
           put("id", cust.id)
           put("name", cust.name)
@@ -4435,7 +4767,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         
         backedUp.forEach { cust ->
           val nameTrimmed = cust.name.trim().lowercase()
-          if (!currentNames.contains(nameTrimmed)) {
+          if (!currentNames.contains(nameTrimmed) && nameTrimmed != "عميل نقدي افتراضي" && nameTrimmed != "عميل نقدي") {
             repository.dao.insertCustomer(cust.copy(id = 0))
           }
         }
@@ -4519,6 +4851,67 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
   val allEmployees = repository.allEmployees.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
   val allExpenses = repository.allExpenses.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+  val defaultExpenseCategories = listOf(
+    "فاتورة كهرباء",
+    "فاتورة مياه",
+    "إيجار المحل / المقر",
+    "إنترنت واتصالات وهاتف",
+    "صيانة دورية ومعدات",
+    "نثريات وضيافة وبوفيه",
+    "أدوات ومواد نظافة",
+    "تسويق ودعاية وإعلان",
+    "رواتب ومستحقات موظفين",
+    "نقل ومواصلات وشحن",
+    "رسوم وتراخيص واشتراكات",
+    "مصروفات تشغيلية أخرى"
+  )
+
+  private val _expenseCategories = MutableStateFlow<List<String>>(loadExpenseCategories())
+  val expenseCategories = _expenseCategories.asStateFlow()
+
+  private fun loadExpenseCategories(): List<String> {
+    val saved = prefs.getString("custom_expense_categories", null)
+    return if (!saved.isNullOrBlank()) {
+      saved.split("||").map { it.trim() }.filter { it.isNotBlank() }
+    } else {
+      defaultExpenseCategories
+    }
+  }
+
+  fun addExpenseCategory(category: String, onSuccess: (() -> Unit)? = null) {
+    val clean = category.trim()
+    if (clean.isBlank()) {
+      showToast("يرجى كتابة اسم بند المصروف")
+      return
+    }
+    val current = _expenseCategories.value.toMutableList()
+    if (current.any { it.equals(clean, ignoreCase = true) }) {
+      showToast("بند المصروف موجود بالفعل")
+      return
+    }
+    current.add(0, clean)
+    _expenseCategories.value = current
+    prefs.edit().putString("custom_expense_categories", current.joinToString("||")).apply()
+    showToast("تمت إضافة بند المصروف بنجاح")
+    onSuccess?.invoke()
+  }
+
+  fun deleteExpenseCategory(category: String, onSuccess: (() -> Unit)? = null) {
+    val clean = category.trim()
+    val current = _expenseCategories.value.toMutableList()
+    current.removeAll { it.equals(clean, ignoreCase = true) }
+    _expenseCategories.value = current
+    prefs.edit().putString("custom_expense_categories", current.joinToString("||")).apply()
+    showToast("تم حذف بند المصروف بنجاح")
+    onSuccess?.invoke()
+  }
+
+  fun resetExpenseCategoriesToDefault() {
+    _expenseCategories.value = defaultExpenseCategories
+    prefs.edit().putString("custom_expense_categories", defaultExpenseCategories.joinToString("||")).apply()
+    showToast("تمت استعادة بنود المصروفات الافتراضية")
+  }
+
   fun addEmployee(name: String, phone: String, role: String, salary: Double) {
     viewModelScope.launch {
       repository.insertEmployee(Employee(name = name, phone = phone, role = role, salary = salary))
@@ -4545,83 +4938,192 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     partyType: String = "مصروف عام",
     partyName: String? = null,
     customerId: Int? = null,
-    supplierId: Int? = null
+    supplierId: Int? = null,
+    onSuccess: ((Expense) -> Unit)? = null,
+    onError: ((String) -> Unit)? = null
   ) {
     viewModelScope.launch {
-      val expense = Expense(
-        type = type,
-        amount = amount,
-        notes = notes,
-        employeeId = employeeId,
-        paymentMethod = paymentMethod,
-        checkNumber = checkNumber,
-        checkBankName = checkBankName,
-        checkInvoiceId = checkInvoiceId,
-        partyType = partyType,
-        partyName = partyName,
-        customerId = customerId,
-        supplierId = supplierId
-      )
-      repository.insertExpense(expense)
+      try {
+        // Resolve employee if needed
+        val resolvedEmpId = employeeId ?: if (partyType == "موظف" || type.startsWith("موظف:")) {
+          val searchName = (partyName ?: type.removePrefix("موظف:").trim()).trim()
+          repository.allEmployees.first().firstOrNull { 
+            it.name.trim().equals(searchName, ignoreCase = true) ||
+            searchName.contains(it.name.trim(), ignoreCase = true) ||
+            it.name.trim().contains(searchName, ignoreCase = true)
+          }?.id
+        } else null
 
-      // 1. If paid to supplier, record SupplierTransaction
-      if (supplierId != null && supplierId > 0) {
-        val sTx = com.example.data.SupplierTransaction(
-          supplierId = supplierId,
-          transactionType = "سداد",
+        val expense = Expense(
+          type = type,
           amount = amount,
-          note = "سند صرف: $type - $notes (${if (paymentMethod == "شيك") "شيك رقم $checkNumber ($checkBankName)" else "نقداً من الصندوق"})"
-        )
-        repository.insertSupplierTransaction(sTx)
-      }
-
-      // 2. If paid/refunded to customer, record CustomerTransaction
-      if (customerId != null && customerId > 0) {
-        val cTx = com.example.data.CustomerTransaction(
+          notes = notes,
+          employeeId = resolvedEmpId,
+          paymentMethod = paymentMethod,
+          checkNumber = checkNumber,
+          checkBankName = checkBankName,
+          checkInvoiceId = checkInvoiceId,
+          partyType = partyType,
+          partyName = partyName,
           customerId = customerId,
-          transactionType = "صرف",
-          amount = amount,
-          note = "سند صرف: $type - $notes (${if (paymentMethod == "شيك") "شيك رقم $checkNumber ($checkBankName)" else "نقداً من الصندوق"})"
+          supplierId = supplierId
         )
-        repository.insertCustomerTransaction(cTx)
-      }
+        val newExpId = repository.insertExpense(expense)
+        val savedExpense = expense.copy(id = newExpId.toInt())
 
-      // 3. If paid with existing check, update check status to endorsed/spent
-      if (paymentMethod == "شيك" && checkInvoiceId != null) {
-        repository.updateCheckStatus(checkInvoiceId, "مجير / تم الصرف", currentUser.value)
-      }
+        // 1. If paid to supplier, record SupplierTransaction
+        if (supplierId != null && supplierId > 0) {
+          val sTx = com.example.data.SupplierTransaction(
+            supplierId = supplierId,
+            transactionType = "سداد",
+            amount = amount,
+            note = "سند صرف: $type - $notes (${if (paymentMethod == "شيك") "شيك رقم $checkNumber ($checkBankName)" else "نقداً من الصندوق"})"
+          )
+          repository.insertSupplierTransaction(sTx)
+        }
 
-      // 4. Add accounting Ledger Entry
-      val debitAcc = when (partyType) {
-        "مورد" -> "حساب الموردين: ${partyName ?: type}"
-        "عميل" -> "حساب العملاء: ${partyName ?: type}"
-        "موظف" -> "رواتب ومستحقات الموظفين: ${partyName ?: type}"
-        else -> "المصروفات العامة: $type"
-      }
-      val creditAcc = if (paymentMethod == "شيك") {
-        "أوراق قبض (شيكات مجيرة: ${checkNumber ?: ""})"
-      } else {
-        "الصندوق / الخزينة"
-      }
-      repository.insertLedgerEntry(
-        com.example.data.LedgerEntry(
-          description = "سند صرف: $type - $notes (${if (paymentMethod == "شيك") "شيك #${checkNumber ?: ""}" else "الصندوق"})",
-          debitAccount = debitAcc,
-          creditAccount = creditAcc,
-          amount = amount
+        // 2. If paid/refunded to customer, record CustomerTransaction
+        if (customerId != null && customerId > 0) {
+          val cTx = com.example.data.CustomerTransaction(
+            customerId = customerId,
+            transactionType = "صرف",
+            amount = amount,
+            note = "سند صرف: $type - $notes (${if (paymentMethod == "شيك") "شيك رقم $checkNumber ($checkBankName)" else "نقداً من الصندوق"})"
+          )
+          repository.insertCustomerTransaction(cTx)
+        }
+
+        // 3. If paid with existing check, update check status to endorsed/spent
+        if (paymentMethod == "شيك" && checkInvoiceId != null) {
+          repository.updateCheckStatus(checkInvoiceId, "مجير / تم الصرف", currentUser.value)
+        }
+
+        // 3.5 If paid to employee, update employee balance
+        if (resolvedEmpId != null && resolvedEmpId > 0) {
+          repository.updateEmployeeBalance(resolvedEmpId, -amount)
+        }
+
+        // 4. Add accounting Ledger Entry
+        val debitAcc = when (partyType) {
+          "مورد" -> "حساب الموردين: ${partyName ?: type}"
+          "عميل" -> "حساب العملاء: ${partyName ?: type}"
+          "موظف" -> "رواتب ومستحقات الموظفين: ${partyName ?: type}"
+          else -> "المصروفات العامة: $type"
+        }
+        val creditAcc = if (paymentMethod == "شيك") {
+          "أوراق قبض (شيكات مجيرة: ${checkNumber ?: ""})"
+        } else {
+          "الصندوق / الخزينة"
+        }
+        repository.insertLedgerEntry(
+          com.example.data.LedgerEntry(
+            description = "سند صرف: $type - $notes (${if (paymentMethod == "شيك") "شيك #${checkNumber ?: ""}" else "الصندوق"})",
+            debitAccount = debitAcc,
+            creditAccount = creditAcc,
+            amount = amount,
+            employeeId = resolvedEmpId
+          )
         )
-      )
-      repository.logAudit(currentUser.value, "سند صرف", "تم تسجيل سند صرف: $type بمبلغ $amount طريقة الدفع: $paymentMethod")
-      showToast("تم حفظ سند الصرف بنجاح")
+        repository.logAudit(currentUser.value, "سند صرف", "تم تسجيل سند صرف: $type بمبلغ $amount طريقة الدفع: $paymentMethod")
+        showToast("تم حفظ سند الصرف بنجاح")
+        onSuccess?.invoke(savedExpense)
+      } catch (e: Exception) {
+        showToast("خطأ أثناء حفظ سند الصرف: ${e.localizedMessage}")
+        onError?.invoke(e.localizedMessage ?: "خطأ أثناء حفظ سند الصرف")
+      }
     }
   }
 
-  fun exportEmployeeStatementToPdf(context: android.content.Context, employee: com.example.data.Employee, expenses: List<com.example.data.Expense>, isPreview: Boolean = false) {
+  fun exportEmployeeStatementToPdf(
+    context: android.content.Context, 
+    employee: com.example.data.Employee, 
+    expenses: List<com.example.data.Expense>? = null, 
+    isPreview: Boolean = false,
+    startDate: Long? = null,
+    endDate: Long? = null
+  ) {
     viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
       try {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
           showToast("جاري تجهيز وتنزيل كشف حساب الموظف... ")
         }
+
+        val allExp = expenses ?: repository.allExpenses.first().filter { 
+          it.employeeId == employee.id || 
+          it.partyName?.trim()?.equals(employee.name.trim(), ignoreCase = true) == true ||
+          it.type.contains(employee.name.trim()) ||
+          it.notes.contains(employee.name.trim())
+        }
+        val allLedg = repository.allLedgerEntries.first().filter { entry ->
+          entry.employeeId == employee.id ||
+          entry.debitAccount.trim().equals(employee.name.trim(), ignoreCase = true) ||
+          entry.creditAccount.trim().equals(employee.name.trim(), ignoreCase = true) ||
+          entry.debitAccount.contains(employee.name.trim()) ||
+          entry.creditAccount.contains(employee.name.trim()) ||
+          (entry.employeeId == null && entry.description.contains(employee.name.trim()))
+        }
+
+        class EmpStatementRow(
+          val date: Long,
+          val type: String,
+          val notes: String,
+          val debit: Double,
+          val credit: Double
+        )
+        val combinedRows = mutableListOf<EmpStatementRow>()
+
+        allExp.forEach { exp ->
+          val vType = if (exp.type.contains("قيد")) "سند قيد" else "سند صرف"
+          combinedRows.add(
+            EmpStatementRow(
+              date = exp.date,
+              type = vType,
+              notes = exp.notes.ifBlank { exp.type },
+              debit = exp.amount,
+              credit = 0.0
+            )
+          )
+        }
+
+        allLedg.forEach { entry ->
+          val isDuplicate = allExp.any { exp ->
+            kotlin.math.abs(exp.amount - entry.amount) < 0.01 && kotlin.math.abs(exp.date - entry.date) < 15000
+          }
+          if (!isDuplicate) {
+            val vType = when {
+              entry.description.contains("سند صرف") -> "سند صرف"
+              entry.description.contains("سند قبض") -> "سند قبض"
+              else -> "سند قيد"
+            }
+            val isDebit = entry.debitAccount.contains(employee.name.trim()) ||
+                          entry.debitAccount.trim().equals(employee.name.trim(), ignoreCase = true) ||
+                          (entry.employeeId == employee.id && !entry.creditAccount.contains(employee.name.trim()))
+            combinedRows.add(
+              EmpStatementRow(
+                date = entry.date,
+                type = vType,
+                notes = entry.description.ifBlank { "$vType للموظف" },
+                debit = if (isDebit) entry.amount else 0.0,
+                credit = if (!isDebit) entry.amount else 0.0
+              )
+            )
+          }
+        }
+        combinedRows.sortBy { it.date }
+
+        // Date range filtering
+        val priorRows = if (startDate != null) combinedRows.filter { it.date < startDate } else emptyList()
+        val priorDebit = priorRows.sumOf { it.debit }
+        val priorCredit = priorRows.sumOf { it.credit }
+        val priorBalance = priorCredit - priorDebit
+
+        val filteredRows = combinedRows.filter { row ->
+          val afterStart = startDate == null || row.date >= startDate
+          val beforeEnd = endDate == null || row.date <= endDate
+          afterStart && beforeEnd
+        }
+
+        val hasPrior = startDate != null && (priorDebit > 0 || priorCredit > 0)
         
         val pdfDocument = android.graphics.pdf.PdfDocument()
         val pageW = 595
@@ -4629,7 +5131,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val rowHeight = 25f
         val headerHeight = 35f
         
-        val contentHeight = 300 + headerHeight + (expenses.size * rowHeight) + 50
+        val totalRowsCount = filteredRows.size + (if (hasPrior) 1 else 0)
+        val contentHeight = 340 + headerHeight + (totalRowsCount * rowHeight) + 80
         val pageH = if (contentHeight > 842) contentHeight.toInt() else 842
 
         val pageInfo = android.graphics.pdf.PdfDocument.PageInfo.Builder(pageW, pageH, 1).create()
@@ -4687,38 +5190,53 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         paint.color = android.graphics.Color.parseColor("#1565C0")
         canvas.drawText(storeName.value.ifEmpty { "مؤسسة الكنز للمحاسبة التجارية" }, xCenter, y, paint)
         
-        y += 30f
-        paint.textSize = 18f
+        y += 28f
+        paint.textSize = 17f
         paint.typeface = fontBold
         paint.color = android.graphics.Color.BLACK
-        canvas.drawText("كشف حساب موظف تفصيلي", xCenter, y, paint)
+        canvas.drawText("كشف حساب موظف تفصيلي (سندات صرف وقيد)", xCenter, y, paint)
         
+        // Date range indicator
+        val dateSdf = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault())
+        val periodText = when {
+          startDate != null && endDate != null -> "الفترة المحددة: من ${dateSdf.format(java.util.Date(startDate))} إلى ${dateSdf.format(java.util.Date(endDate))}"
+          startDate != null -> "الفترة المحددة: من ${dateSdf.format(java.util.Date(startDate))} حتى الآن"
+          endDate != null -> "الفترة المحددة: حتى تاريخ ${dateSdf.format(java.util.Date(endDate))}"
+          else -> "الفترة المحددة: كافة الحركات المسجلة"
+        }
         y += 20f
         paint.textSize = 12f
+        paint.typeface = fontBold
+        paint.color = android.graphics.Color.parseColor("#1565C0")
+        canvas.drawText(periodText, xCenter, y, paint)
+
+        y += 18f
+        paint.textSize = 10f
         paint.typeface = fontRegular
         paint.color = android.graphics.Color.DKGRAY
         val sdf = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
         canvas.drawText("تاريخ استخراج الكشف: ${sdf.format(java.util.Date())}", xCenter, y, paint)
         
-        y += 30f
+        y += 25f
         canvas.drawLine(margin + 20, y, pageW - margin - 20, y, borderPaint)
-        y += 30f
+        y += 25f
         
         paint.textAlign = android.graphics.Paint.Align.RIGHT
         paint.textSize = 14f
         paint.color = android.graphics.Color.BLACK
         paint.typeface = fontBold
         canvas.drawText("معلومات الموظف:", xRight, y, paint)
-        y += 25f
+        y += 22f
         
+        val curr = currencySymbol.value.ifEmpty { "ر.س" }
         paint.textSize = 12f
         paint.typeface = fontRegular
         canvas.drawText("اسم الموظف: ${employee.name}", xRight, y, paint)
         canvas.drawText("الوظيفة: ${employee.role}", xCenter, y, paint)
         y += 20f
-        canvas.drawText("الراتب الأساسي: ${employee.salary} ر.س", xRight, y, paint)
+        canvas.drawText("الراتب الأساسي: ${employee.salary} $curr", xRight, y, paint)
         canvas.drawText("الهاتف: ${employee.phone.ifEmpty { "غير محدد" }}", xCenter, y, paint)
-        y += 40f
+        y += 35f
         
         canvas.drawRect(xLeft, y - 20f, xRight, y + 10f, headerBgPaint)
         canvas.drawRect(xLeft, y - 20f, xRight, y + 10f, borderPaint)
@@ -4726,48 +5244,97 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         paint.typeface = fontBold
         paint.color = android.graphics.Color.BLACK
         val colDateX = xRight - 10f
-        val colTypeX = xRight - 100f
-        val colNotesX = xRight - 220f
-        val colAmountX = xLeft + 60f
+        val colTypeX = xRight - 95f
+        val colNotesX = xRight - 190f
+        val colDebitX = xLeft + 120f
+        val colCreditX = xLeft + 45f
         
         canvas.drawText("التاريخ", colDateX, y, paint)
-        canvas.drawText("النوع", colTypeX, y, paint)
-        canvas.drawText("البيان", colNotesX, y, paint)
-        canvas.drawText("المبلغ", colAmountX, y, paint)
+        canvas.drawText("نوع السند", colTypeX, y, paint)
+        canvas.drawText("البيان / الوصف", colNotesX, y, paint)
+        canvas.drawText("مدين (-)", colDebitX, y, paint)
+        canvas.drawText("دائن (+)", colCreditX, y, paint)
         
         y += 20f
         paint.typeface = fontRegular
         
-        val dateSdf = java.text.SimpleDateFormat("yyyy/MM/dd", java.util.Locale.getDefault())
-        var totalExpenses = 0.0
+        var periodDebit = 0.0
+        var periodCredit = 0.0
+
+        // Prior balance row if exists
+        if (hasPrior) {
+          canvas.drawRect(xLeft, y - 15f, xRight, y + 10f, headerBgPaint)
+          paint.textAlign = android.graphics.Paint.Align.RIGHT
+          canvas.drawText(dateSdf.format(java.util.Date(startDate!!)), colDateX, y, paint)
+          paint.typeface = fontBold
+          paint.color = android.graphics.Color.parseColor("#1565C0")
+          canvas.drawText("رصيد سابق", colTypeX, y, paint)
+          canvas.drawText("رصيد ما قبل تاريخ ${dateSdf.format(java.util.Date(startDate))}", colNotesX, y, paint)
+          
+          if (priorDebit > 0) {
+            paint.color = android.graphics.Color.parseColor("#D32F2F")
+            canvas.drawText("$priorDebit", colDebitX, y, paint)
+          } else {
+            paint.color = android.graphics.Color.GRAY
+            canvas.drawText("-", colDebitX, y, paint)
+          }
+          if (priorCredit > 0) {
+            paint.color = android.graphics.Color.parseColor("#15803D")
+            canvas.drawText("$priorCredit", colCreditX, y, paint)
+          } else {
+            paint.color = android.graphics.Color.GRAY
+            canvas.drawText("-", colCreditX, y, paint)
+          }
+          y += rowHeight
+        }
         
-        if (expenses.isEmpty()) {
+        if (filteredRows.isEmpty() && !hasPrior) {
           y += 15f
           paint.textAlign = android.graphics.Paint.Align.CENTER
-          canvas.drawText("لا يوجد مسحوبات أو سندات صرف مسجلة", xCenter, y, paint)
+          canvas.drawText("لا يوجد سندات صرف أو قيود مسجلة لهذا الموظف خلال الفترة المحددة", xCenter, y, paint)
           y += 20f
         } else {
-          for ((index, exp) in expenses.withIndex()) {
+          for ((index, row) in filteredRows.withIndex()) {
             if (index % 2 == 0) {
               canvas.drawRect(xLeft, y - 15f, xRight, y + 10f, bgPaint)
             }
             paint.textAlign = android.graphics.Paint.Align.RIGHT
             
-            canvas.drawText(dateSdf.format(java.util.Date(exp.date)), colDateX, y, paint)
-            canvas.drawText(exp.type, colTypeX, y, paint)
+            canvas.drawText(dateSdf.format(java.util.Date(row.date)), colDateX, y, paint)
             
-            var note = exp.notes
+            paint.typeface = fontBold
+            paint.color = if (row.type == "سند قيد") android.graphics.Color.parseColor("#1E40AF") else android.graphics.Color.parseColor("#B45309")
+            canvas.drawText(row.type, colTypeX, y, paint)
+            
+            paint.typeface = fontRegular
+            paint.color = android.graphics.Color.BLACK
+            var note = row.notes
             if (note.length > 25) note = note.take(22) + "..."
             canvas.drawText(note, colNotesX, y, paint)
             
-            paint.color = android.graphics.Color.parseColor("#D32F2F")
-            paint.typeface = fontBold
-            canvas.drawText("${exp.amount}", colAmountX, y, paint)
+            if (row.debit > 0) {
+              paint.color = android.graphics.Color.parseColor("#D32F2F")
+              paint.typeface = fontBold
+              canvas.drawText("${row.debit}", colDebitX, y, paint)
+            } else {
+              paint.color = android.graphics.Color.GRAY
+              canvas.drawText("-", colDebitX, y, paint)
+            }
+
+            if (row.credit > 0) {
+              paint.color = android.graphics.Color.parseColor("#15803D")
+              paint.typeface = fontBold
+              canvas.drawText("${row.credit}", colCreditX, y, paint)
+            } else {
+              paint.color = android.graphics.Color.GRAY
+              canvas.drawText("-", colCreditX, y, paint)
+            }
             
             paint.color = android.graphics.Color.BLACK
             paint.typeface = fontRegular
             
-            totalExpenses += exp.amount
+            periodDebit += row.debit
+            periodCredit += row.credit
             y += rowHeight
           }
         }
@@ -4775,29 +5342,40 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         canvas.drawLine(xLeft, y - 15f, xRight, y - 15f, borderPaint)
         y += 20f
         
-        y += 20f
         paint.textAlign = android.graphics.Paint.Align.RIGHT
         paint.textSize = 14f
         paint.typeface = fontBold
         
-        val netSalary = employee.salary - totalExpenses
+        val grandTotalDebit = priorDebit + periodDebit
+        val grandTotalCredit = priorCredit + periodCredit
+        val netSalary = employee.salary + grandTotalCredit - grandTotalDebit
         
-        canvas.drawText("الخلاصة المالية:", xRight, y, paint)
+        canvas.drawText("الخلاصة المالية للموظف:", xRight, y, paint)
         y += 25f
         
         paint.textSize = 12f
         paint.typeface = fontRegular
-        canvas.drawText("إجمالي الراتب المستحق: ${employee.salary} ر.س", xRight, y, paint)
+        canvas.drawText("الراتب الأساسي: ${employee.salary} $curr", xRight, y, paint)
         y += 20f
+        
+        if (hasPrior) {
+          paint.color = android.graphics.Color.parseColor("#1565C0")
+          canvas.drawText("رصيد مرحل سابق قبل الفترة: ${if (priorBalance >= 0) "+ $priorBalance" else "- ${-priorBalance}"} $curr", xRight, y, paint)
+          y += 20f
+        }
         
         paint.color = android.graphics.Color.parseColor("#D32F2F")
-        canvas.drawText("إجمالي المسحوبات: $totalExpenses ر.س", xRight, y, paint)
+        canvas.drawText("إجمالي سندات الصرف خلال الفترة (مدين): $periodDebit $curr", xRight, y, paint)
+        y += 20f
+
+        paint.color = android.graphics.Color.parseColor("#1E40AF")
+        canvas.drawText("إجمالي سندات القيد خلال الفترة (دائن): $periodCredit $curr", xRight, y, paint)
         y += 20f
         
-        paint.color = android.graphics.Color.parseColor("#388E3C")
+        paint.color = if (netSalary >= 0) android.graphics.Color.parseColor("#388E3C") else android.graphics.Color.parseColor("#D32F2F")
         paint.typeface = fontBold
         paint.textSize = 14f
-        canvas.drawText("صافي الراتب المتبقي: $netSalary ر.س", xRight, y, paint)
+        canvas.drawText("صافي المستحق للموظف: $netSalary $curr", xRight, y, paint)
         
         pdfDocument.finishPage(page)
 
@@ -4905,6 +5483,32 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     restoreCustomersFromBackup()
     restoreSuppliersFromBackup()
 
+    // Clean up any supplier merchandise purchase invoices from operating expenses
+    viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+      try {
+        val existingExpenses = repository.allExpenses.first()
+        val supplierPurchases = existingExpenses.filter {
+          it.type.startsWith("مشتريات بضاعة من مورد") ||
+          it.type.startsWith("مرتجع مشتريات من مورد") ||
+          (it.partyType == "مورد" && it.notes.contains("فاتورة شراء بضاعة وتوريد للمخزن"))
+        }
+        supplierPurchases.forEach {
+          repository.deleteExpense(it)
+        }
+      } catch (_: Exception) {}
+    }
+
+    // Clean up any placeholder dummy customer so real customer names show
+    viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+      try {
+        val dummyCusts = repository.allCustomers.first().filter {
+          it.name.trim() == "عميل نقدي افتراضي" || it.name.trim() == "عميل نقدي"
+        }
+        dummyCusts.forEach {
+          repository.deleteCustomer(it)
+        }
+      } catch (_: Exception) {}
+    }
 
     viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
       try {

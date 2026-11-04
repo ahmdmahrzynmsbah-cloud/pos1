@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.TextStyle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.net.Uri
@@ -64,6 +65,7 @@ import android.app.Activity
   val toastMessage by viewModel.toastMessage.collectAsState(null)
   val currencySymbol by viewModel.currencySymbol.collectAsState()
   var currentTab by remember { mutableStateOf("pos") }
+  var previousTabForStatements by remember { mutableStateOf("pos") }
   var showNotificationsDialog by remember { mutableStateOf(false) }
   var showUpgradeDialog by remember { mutableStateOf(false) }
   val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
@@ -152,7 +154,15 @@ import android.app.Activity
       }
     }
   }
-  
+
+  // Handle Back Button to prevent exiting app when inside tabs or drawer is open
+  BackHandler(enabled = drawerState.isOpen) {
+    scope.launch { drawerState.close() }
+  }
+  BackHandler(enabled = !drawerState.isOpen && currentTab != "pos") {
+    currentTab = "pos"
+  }
+
   BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
     val isCompact = maxWidth < 720.dp
     
@@ -454,13 +464,14 @@ import android.app.Activity
             .weight(1f)
             .fillMaxHeight()
         ) {
-          if (viewModel.subscriptionStatus.collectAsState().value == "TRIAL") {
+          val currentSubStatus by viewModel.subscriptionStatus.collectAsState()
+          if (currentSubStatus != "EXPIRED") {
             val whatsappNum by viewModel.supportWhatsappNumber.collectAsState()
             val bannerText by viewModel.subscriptionBannerText.collectAsState()
             val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
             val infiniteTransition = rememberInfiniteTransition(label = "banner_pulse")
             val animatedAlpha by infiniteTransition.animateFloat(
-              initialValue = 0.88f,
+              initialValue = 0.90f,
               targetValue = 1f,
               animationSpec = infiniteRepeatable(
                 animation = tween(1200, easing = FastOutSlowInEasing),
@@ -468,49 +479,74 @@ import android.app.Activity
               ),
               label = "alpha"
             )
+
+            val displayBannerText = remember(currentSubStatus, bannerText) {
+              if (currentSubStatus == "TRIAL") {
+                bannerText.ifBlank { viewModel.defaultSubscriptionBannerText }
+              } else {
+                if (bannerText == viewModel.defaultSubscriptionBannerText || bannerText.isBlank()) {
+                  "نظام نقاط البيع وإدارة المبيعات السحابي المتكامل - للدعم الفني والاستفسارات وخدمة العملاء تواصل معنا عبر واتساب"
+                } else {
+                  bannerText
+                }
+              }
+            }
+
             Surface(
               modifier = Modifier.fillMaxWidth(),
-              color = MaterialTheme.colorScheme.primary.copy(alpha = animatedAlpha)
+              color = MaterialTheme.colorScheme.primary.copy(alpha = animatedAlpha),
+              shadowElevation = 2.dp
             ) {
               Row(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .padding(horizontal = 12.dp, vertical = 6.dp),
+                  .padding(horizontal = 10.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
               ) {
-                // Animated Trial Text FIRST (Right side in RTL)
-                Box(
+                // Animated Text with Icon (Right side in RTL)
+                Row(
                   modifier = Modifier
                     .weight(1f)
-                    .padding(start = 4.dp, end = 12.dp)
+                    .padding(end = 8.dp)
                     .clipToBounds(),
-                  contentAlignment = Alignment.CenterStart
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                  Icon(
+                    imageVector = if (currentSubStatus == "TRIAL") Icons.Default.Campaign else Icons.Default.Stars,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(17.dp)
+                  )
                   Text(
-                    text = " $bannerText ",
-                    color = MaterialTheme.colorScheme.surface,
+                    text = " $displayBannerText ",
+                    color = Color.White,
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
                     maxLines = 1,
                     modifier = Modifier.basicMarquee(
                       iterations = Int.MAX_VALUE,
-                      velocity = 35.dp
+                      velocity = 38.dp
                     )
                   )
                 }
 
-                // Contact Button SECOND (Other side / Left side in RTL)
+                // Contact Button (Left side in RTL)
                 Button(
                   onClick = {
-                    val cleanNum = whatsappNum.filter { it.isDigit() }
+                    val cleanNum = whatsappNum.filter { it.isDigit() }.ifBlank { "201034859313" }
                     try {
                       uriHandler.openUri("https://wa.me/$cleanNum")
                     } catch (e: Exception) {
-                      viewModel.showToast("عفواً، لا يمكن فتح الرابط.")
+                      viewModel.showToast("رقم التواصل عبر واتساب: $cleanNum")
                     }
                   },
-                  colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surface),
+                  colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.White,
+                    contentColor = Color(0xFF1E293B)
+                  ),
+                  elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp),
                   contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                   modifier = Modifier.height(32.dp),
                   shape = RoundedCornerShape(8.dp)
@@ -527,7 +563,7 @@ import android.app.Activity
                     )
                     Text(
                       "تواصل معنا",
-                      color = MaterialTheme.colorScheme.onSurface,
+                      color = Color(0xFF1E293B),
                       fontSize = 11.sp,
                       fontWeight = FontWeight.Bold
                     )
@@ -580,19 +616,34 @@ import android.app.Activity
                   "pos" -> PosScreen(viewModel, products, categories, customers, activeShift, banks, onNavigateTab = { currentTab = it })
                   "dashboard" -> DashboardScreen(viewModel, invoices, products, categories, ledgerEntries)
                   "inventory" -> InventoryScreen(viewModel, products, categories, suppliers)
-                  "accounting" -> AccountingScreen(viewModel, ledgerEntries)
-                  "statements" -> AccountStatementsScreen(viewModel)
-                  "balances_report" -> BalancesReportScreen(viewModel, onBackClick = { currentTab = "more" })
+                  "accounting" -> AccountingScreen(viewModel, ledgerEntries, onNavigate = { currentTab = it })
+                  "statements" -> AccountStatementsScreen(viewModel, onBackClick = { currentTab = previousTabForStatements })
+                  "balances_report" -> BalancesReportScreen(
+                    viewModel, 
+                    onBackClick = { currentTab = "more" },
+                    onNavigateToStatements = {
+                      previousTabForStatements = "balances_report"
+                      currentTab = "statements"
+                    }
+                  )
                   "expense_balances_report" -> ExpenseBalancesReportScreen(viewModel, onBackClick = { currentTab = "more" })
                   "checks" -> ChecksScreen(viewModel, invoices, customers)
-                  "crm" -> CrmScreen(viewModel, customers, invoices)
+                  "crm" -> CrmScreen(
+                    viewModel, 
+                    customers, 
+                    invoices,
+                    onNavigateToStatements = {
+                      previousTabForStatements = "crm"
+                      currentTab = "statements"
+                    }
+                  )
                   "settings" -> SettingsScreen(viewModel)
                   "admin_users" -> AdminUsersScreen(viewModel, onBackClick = { currentTab = "more" })
                   "admin_settings" -> AdminSettingsScreen(viewModel, onBackClick = { currentTab = "more" }, onNavigate = { currentTab = it })
                   "admin_logs" -> AdminActivityLogScreen(viewModel, onBackClick = { currentTab = "more" })
                   "admin_firebase" -> AdminFirebaseScreen(viewModel, onBackClick = { currentTab = "more" })
                   "admin_branches" -> AdminBranchesScreen(viewModel, onBackClick = { currentTab = "more" })
-                  "invoice_form" -> InvoiceFormScreen(viewModel, onBackClick = { currentTab = "pos" })
+                  "invoice_form" -> InvoiceFormScreen(viewModel, onBackClick = { viewModel.clearCart(); viewModel.setDiscount(0.0); currentTab = "pos" })
                   "more" -> MoreScreen(viewModel, onNavigate = { currentTab = it }, onLogout = { showLogoutDialog = true })
                   "feature_requests" -> FeatureRequestsScreen(viewModel, onBackClick = { currentTab = "more" })
                   "backup_restore" -> BackupRestoreScreen(viewModel, onBackClick = { currentTab = "more" })
@@ -1474,7 +1525,8 @@ fun MainActionHubScreen(
   onOpenInvoiceHistory: () -> Unit,
   onOpenTransactionsLog: () -> Unit = {},
   onOpenAdvancedSalesInvoice: () -> Unit = {},
-  onOpenJournalVouchers: () -> Unit = {}
+  onOpenJournalVouchers: () -> Unit = {},
+  onOpenDraftsList: () -> Unit = {}
 ) {
   val allProductsState by viewModel.allProducts.collectAsState(initial = emptyList())
   val lowStockList = remember(allProductsState) { allProductsState.filter { it.quantity <= it.minQuantityAlert } }
@@ -1553,7 +1605,7 @@ fun MainActionHubScreen(
         icon = Icons.Default.ShoppingCart,
         iconBgColor = Color(0xFF0284C7),
         onClick = onOpenSalesInvoice,
-        secondaryText = "مسودة مبيع ",
+        secondaryText = "مسودة مبيع",
         onSecondaryClick = onOpenSalesDraft,
         modifier = Modifier.weight(1f)
       )
@@ -1577,9 +1629,9 @@ fun MainActionHubScreen(
       HubActionCard(
         title = "إنشاء فاتورة شراء",
         icon = Icons.Default.LocalShipping,
-        iconBgColor = Color(0xFF16A34A),
+        iconBgColor = PosTealHeader,
         onClick = onOpenPurchaseInvoice,
-        secondaryText = "مسودة شراء ",
+        secondaryText = "مسودة شراء",
         onSecondaryClick = onOpenPurchaseDraft,
         modifier = Modifier.weight(1f)
       )
@@ -1630,9 +1682,9 @@ fun MainActionHubScreen(
         title = "مسودات الفواتير",
         icon = Icons.Default.EditNote,
         iconBgColor = Color(0xFF059669),
-        onClick = onOpenSalesDraft,
+        onClick = onOpenDraftsList,
         secondaryText = "متابعة المسودات ",
-        onSecondaryClick = onOpenSalesDraft,
+        onSecondaryClick = onOpenDraftsList,
         modifier = Modifier.weight(1f)
       )
 
@@ -1766,6 +1818,7 @@ fun HubActionCard(
   onClick: () -> Unit,
   secondaryText: String? = null,
   onSecondaryClick: (() -> Unit)? = null,
+  cardBgColor: Color? = null,
   modifier: Modifier = Modifier
 ) {
   val density = androidx.compose.ui.platform.LocalDensity.current
@@ -1779,16 +1832,15 @@ fun HubActionCard(
   ) {
     // Main Notched Card Body
     Surface(
-      onClick = onClick,
       modifier = Modifier
         .fillMaxWidth()
         .padding(top = 28.dp) // Push card body down
         .fillMaxHeight(),
       shape = TopCutoutShape(cutoutRadius, cornerRadius),
-      color = MaterialTheme.colorScheme.surface,
+      color = cardBgColor ?: MaterialTheme.colorScheme.surface,
       tonalElevation = 2.dp,
       shadowElevation = 2.dp,
-      border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+      border = BorderStroke(1.dp, if (cardBgColor != null) Color(0xFF3F3F46) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
     ) {
       Column(
         modifier = Modifier
@@ -1797,59 +1849,71 @@ fun HubActionCard(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
       ) {
-        // Title
-        Text(
-          text = title,
-          fontWeight = FontWeight.Bold,
-          fontSize = 14.sp,
-          color = MaterialTheme.colorScheme.onSurface,
-          textAlign = TextAlign.Center,
-          maxLines = 2,
-          overflow = TextOverflow.Ellipsis
-        )
+        // Main action touch target (Title & Upper Card Area)
+        Box(
+          modifier = Modifier
+            .fillMaxWidth()
+            .weight(1f)
+            .clickable(onClick = onClick),
+          contentAlignment = Alignment.Center
+        ) {
+          Text(
+            text = title,
+            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp,
+            color = if (cardBgColor != null) Color.White else MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+          )
+        }
 
-        // Secondary action pill
+        // Secondary action pill (Distinct click target for drafts)
         if (secondaryText != null && onSecondaryClick != null) {
           Surface(
             onClick = onSecondaryClick,
             shape = RoundedCornerShape(8.dp),
-            color = iconBgColor.copy(alpha = 0.15f),
-            modifier = Modifier.height(26.dp)
+            color = if (cardBgColor != null) Color(0xFF27272A) else iconBgColor.copy(alpha = 0.15f),
+            border = BorderStroke(1.dp, if (cardBgColor != null) Color(0xFF52525B) else iconBgColor.copy(alpha = 0.3f)),
+            modifier = Modifier
+              .fillMaxWidth(0.92f)
+              .height(30.dp)
           ) {
             Row(
-              modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+              modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.Center
             ) {
               Icon(
-                imageVector = Icons.Default.TouchApp,
+                imageVector = Icons.Default.EditNote,
                 contentDescription = null,
-                tint = iconBgColor,
-                modifier = Modifier.size(12.dp)
+                tint = if (cardBgColor != null) Color(0xFFFBBF24) else iconBgColor,
+                modifier = Modifier.size(15.dp)
               )
               Spacer(modifier = Modifier.width(4.dp))
               Text(
                 text = secondaryText,
                 fontWeight = FontWeight.Bold,
-                fontSize = 11.sp,
-                color = iconBgColor
+                fontSize = 11.5.sp,
+                color = if (cardBgColor != null) Color.White else iconBgColor
               )
             }
           }
         } else {
-          Spacer(modifier = Modifier.height(26.dp))
+          Spacer(modifier = Modifier.height(30.dp))
         }
       }
     }
 
-    // Floating Icon
+    // Floating Icon (Also clickable to trigger main action)
     Box(
       modifier = Modifier
         .align(Alignment.TopCenter)
         .size(56.dp) // Larger circle
         .shadow(4.dp, CircleShape) // Drop shadow
         .clip(CircleShape)
-        .background(iconBgColor),
+        .background(iconBgColor)
+        .clickable(onClick = onClick),
       contentAlignment = Alignment.Center
     ) {
       Icon(
@@ -1883,6 +1947,17 @@ fun PosScreen(
   val context = androidx.compose.ui.platform.LocalContext.current
   
   var activePosView by remember { mutableStateOf("hub") }
+
+  BackHandler(enabled = activePosView != "hub") {
+    viewModel.clearCart()
+    viewModel.selectCustomer(null)
+    viewModel.setManualCustomerName("")
+    viewModel.setSelectedSupplier(null)
+    viewModel.setManualSupplierName("")
+    viewModel.setDiscount(0.0)
+    activePosView = "hub"
+  }
+
   var showCheckoutDialog by remember { mutableStateOf(false) }
   var showReceiptDialog by remember { mutableStateOf(false) }
   var showPrinterDialog by remember { mutableStateOf(false) }
@@ -1892,7 +1967,10 @@ fun PosScreen(
   var showSalesDraftDialog by remember { mutableStateOf(false) }
   var showReturnsDialog by remember { mutableStateOf(false) }
   var showInvoiceHistoryDialog by remember { mutableStateOf(false) }
+  var invoiceHistoryInitialFilter by remember { mutableStateOf("الكل") }
   var showSalesSetupDialog by remember { mutableStateOf(false) }
+  var salesSetupSessionId by remember { mutableIntStateOf(0) }
+  var purchaseSetupSessionId by remember { mutableIntStateOf(0) }
   var isSalesReturn by remember { mutableStateOf(false) }
   var isPurchaseReturn by remember { mutableStateOf(false) }
 
@@ -1909,47 +1987,141 @@ fun PosScreen(
     MainActionHubScreen(
       viewModel = viewModel,
       onOpenSalesInvoice = {
+        viewModel.damagedCreditAccount.value = null
+        viewModel.clearCart()
+        viewModel.selectCustomer(null)
+        viewModel.setManualCustomerName("")
+        viewModel.setSelectedSupplier(null)
+        viewModel.setManualSupplierName("")
+        viewModel.setDiscount(0.0)
+        viewModel.setupCustomDate.value = null
+        viewModel.setupPaymentMethod.value = "نقدي"
+        viewModel.setupCheckNumber.value = ""
+        viewModel.setupCheckBankName.value = ""
         isSalesReturn = false
         isDraftMode = false
+        salesSetupSessionId++
         showSalesSetupDialog = true
       },
       onOpenSalesDraft = {
+        viewModel.damagedCreditAccount.value = null
+        viewModel.clearCart()
+        viewModel.selectCustomer(null)
+        viewModel.setManualCustomerName("")
+        viewModel.setSelectedSupplier(null)
+        viewModel.setManualSupplierName("")
+        viewModel.setDiscount(0.0)
+        viewModel.setupCustomDate.value = null
+        viewModel.setupPaymentMethod.value = "نقدي"
+        viewModel.setupCheckNumber.value = ""
+        viewModel.setupCheckBankName.value = ""
         isSalesReturn = false
         isDraftMode = true
-        showSalesSetupDialog = true 
+        salesSetupSessionId++
+        showSalesSetupDialog = true
       },
       onOpenPurchaseInvoice = {
+        viewModel.clearCart()
+        viewModel.selectCustomer(null)
+        viewModel.setManualCustomerName("")
+        viewModel.setSelectedSupplier(null)
+        viewModel.setManualSupplierName("")
+        viewModel.setDiscount(0.0)
+        viewModel.setupCustomDate.value = null
+        viewModel.setupPaymentMethod.value = "نقدي"
+        viewModel.setupCheckNumber.value = ""
+        viewModel.setupCheckBankName.value = ""
         isPurchaseReturn = false
         isDraftMode = false
+        purchaseSetupSessionId++
         showPurchaseDialog = true
       },
       onOpenPurchaseDraft = { 
+        viewModel.clearCart()
+        viewModel.selectCustomer(null)
+        viewModel.setManualCustomerName("")
+        viewModel.setSelectedSupplier(null)
+        viewModel.setManualSupplierName("")
+        viewModel.setDiscount(0.0)
+        viewModel.setupCustomDate.value = null
+        viewModel.setupPaymentMethod.value = "نقدي"
+        viewModel.setupCheckNumber.value = ""
+        viewModel.setupCheckBankName.value = ""
         isPurchaseReturn = false
         isDraftMode = true
-        showPurchaseDialog = true 
+        purchaseSetupSessionId++
+        showPurchaseDialog = true
       },
-      onOpenReturns = { showReturnsDialog = true },
+      onOpenReturns = { 
+        viewModel.clearCart()
+        viewModel.selectCustomer(null)
+        viewModel.setManualCustomerName("")
+        viewModel.setSelectedSupplier(null)
+        viewModel.setManualSupplierName("")
+        viewModel.setDiscount(0.0)
+        viewModel.setupCustomDate.value = null
+        showReturnsDialog = true 
+      },
       onOpenInventory = { onNavigateTab("inventory") },
-      onOpenInvoiceHistory = { showInvoiceHistoryDialog = true },
+      onOpenInvoiceHistory = { 
+        invoiceHistoryInitialFilter = "الكل"
+        showInvoiceHistoryDialog = true 
+      },
       onOpenTransactionsLog = { onNavigateTab("transactions_history") },
-      onOpenAdvancedSalesInvoice = { onNavigateTab("invoice_form") },
-      onOpenJournalVouchers = { onNavigateTab("journal_vouchers") }
+      onOpenAdvancedSalesInvoice = { 
+        viewModel.clearCart()
+        viewModel.selectCustomer(null)
+        viewModel.setManualCustomerName("")
+        viewModel.setSelectedSupplier(null)
+        viewModel.setManualSupplierName("")
+        viewModel.setDiscount(0.0)
+        onNavigateTab("invoice_form") 
+      },
+      onOpenJournalVouchers = { onNavigateTab("journal_vouchers") },
+      onOpenDraftsList = {
+        invoiceHistoryInitialFilter = "المسودات"
+        showInvoiceHistoryDialog = true
+      }
     )
   } else if (activePosView == "purchase") {
     PosSalesInvoiceScreen(
       viewModel = viewModel,
-      onBackClick = { activePosView = "hub" },
+      onBackClick = { 
+        viewModel.clearCart()
+        viewModel.selectCustomer(null)
+        viewModel.setManualCustomerName("")
+        viewModel.setSelectedSupplier(null)
+        viewModel.setManualSupplierName("")
+        viewModel.setDiscount(0.0)
+        activePosView = "hub" 
+      },
       isPurchaseMode = true,
       isReturnMode = isPurchaseReturn,
-      isDraftMode = isDraftMode
+      isDraftMode = isDraftMode,
+      onNavigateToStatements = {
+        onNavigateTab("statements")
+      }
     )
   } else {
     PosSalesInvoiceScreen(
       viewModel = viewModel,
-      onBackClick = { activePosView = "hub" },
+      onBackClick = { 
+        viewModel.clearCart()
+        viewModel.selectCustomer(null)
+        viewModel.setManualCustomerName("")
+        viewModel.setSelectedSupplier(null)
+        viewModel.setManualSupplierName("")
+        viewModel.setDiscount(0.0)
+        viewModel.damagedCreditAccount.value = null
+        isSalesReturn = false
+        activePosView = "hub" 
+      },
       isPurchaseMode = false,
       isReturnMode = isSalesReturn,
-      isDraftMode = isDraftMode
+      isDraftMode = isDraftMode,
+      onNavigateToStatements = {
+        onNavigateTab("statements")
+      }
     )
   }
   
@@ -2113,7 +2285,9 @@ fun PosScreen(
           } catch (e: Exception) { null }
         } else null,
         customInvoiceDate = viewModel.setupCustomDate.value,
+        clearCartAfter = true,
         onSuccess = {
+          viewModel.clearCart()
           showCheckoutDialog = false
           showReceiptDialog = true
         }
@@ -2149,7 +2323,10 @@ fun PosScreen(
     val cashierAddress by viewModel.cashierAddress.collectAsState("")
     
     AlertDialog(
-    onDismissRequest = { showReceiptDialog = false },
+    onDismissRequest = {
+      showReceiptDialog = false
+      viewModel.clearCart()
+    },
       title = {
         Row(
           modifier = Modifier.fillMaxWidth(),
@@ -2191,7 +2368,9 @@ fun PosScreen(
           if (cashierPhone.isNotEmpty() && cashierPhone != storePhone) {
             Text("هاتف الكاشير: $cashierPhone", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
           }
-          Text("الرقم الضريبي: $storeVatNumber", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+          if (storeVatNumber.isNotBlank()) {
+            Text("الرقم الضريبي: $storeVatNumber", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+          }
           Text("الفرع: $currentBranch", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
           if (cashierAddress.isNotEmpty()) {
             Text("العنوان: $cashierAddress", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
@@ -2335,7 +2514,10 @@ fun PosScreen(
       }
     },
       dismissButton = {
-        TextButton(onClick = { showReceiptDialog = false }) {
+        TextButton(onClick = {
+          showReceiptDialog = false
+          viewModel.clearCart()
+        }) {
         Text("إغلاق")
       }
     }
@@ -2345,22 +2527,27 @@ fun PosScreen(
   // --- 1. Purchase Invoice Setup Dialog ("إعداد الفاتورة" للمورد) ---
   if (showPurchaseDialog) {
     val suppliers by viewModel.allSuppliers.collectAsState(emptyList())
+    val customers by viewModel.allCustomers.collectAsState(emptyList())
     val selectedSupplierId by viewModel.selectedSupplierId.collectAsState()
     val allSupplierTransactions by viewModel.allSupplierTransactions.collectAsState(emptyList())
+    val allCustomerTransactions by viewModel.allCustomerTransactions.collectAsState(emptyList())
 
-    var selectedSupLocal by remember { mutableStateOf<Supplier?>(suppliers.find { it.id == selectedSupplierId }) }
-    var manualNameLocal by remember { mutableStateOf(viewModel.manualSupplierName.value) }
-    var paymentTypeLocal by remember { mutableStateOf("نقدي") }
-    var checkNumberLocal by remember { mutableStateOf("") }
-    var checkBankLocal by remember { mutableStateOf("") }
-    var checkDateLocal by remember { mutableStateOf(System.currentTimeMillis()) }
-    var notesLocal by remember { mutableStateOf("") }
+    var selectedSupLocal by remember(purchaseSetupSessionId) { mutableStateOf<Supplier?>(null) }
+    var selectedCustLocal by remember(purchaseSetupSessionId) { mutableStateOf<Customer?>(null) }
+    var manualNameLocal by remember(purchaseSetupSessionId) { mutableStateOf("") }
+    var manualPartyRoleLocal by remember(purchaseSetupSessionId) { mutableStateOf("supplier") }
+    var paymentTypeLocal by remember(purchaseSetupSessionId) { mutableStateOf("نقدي") }
+    var checkNumberLocal by remember(purchaseSetupSessionId) { mutableStateOf("") }
+    var checkBankLocal by remember(purchaseSetupSessionId) { mutableStateOf("") }
+    var checkDateLocal by remember(purchaseSetupSessionId) { mutableStateOf(System.currentTimeMillis()) }
+    var notesLocal by remember(purchaseSetupSessionId) { mutableStateOf("") }
     var showSupPicker by remember { mutableStateOf(false) }
     var supSearchQuery by remember { mutableStateOf("") }
+    var partyFilterTabLocal by remember { mutableStateOf("all") }
     var showStatementForSup by remember { mutableStateOf<Supplier?>(null) }
 
     val context = androidx.compose.ui.platform.LocalContext.current
-    var customDateTime by remember { mutableStateOf(viewModel.setupCustomDate.value ?: System.currentTimeMillis()) }
+    var customDateTime by remember(purchaseSetupSessionId) { mutableStateOf(System.currentTimeMillis()) }
     val timeFormatter = remember { java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US) }
     val dateFormatter = remember { java.text.SimpleDateFormat("dd-MM-yyyy", java.util.Locale.US) }
     val timeStr = remember(customDateTime) { timeFormatter.format(java.util.Date(customDateTime)) }
@@ -2436,7 +2623,7 @@ fun PosScreen(
               Icon(Icons.Default.Close, contentDescription = "إغلاق", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text(
-              text = if (isPurchaseReturn) "إعداد فاتورة مرتجع مشتريات " else "إعداد الفاتورة",
+              text = if (isPurchaseReturn) "إعداد فاتورة مرتجع مشتريات " else if (isDraftMode) "إعداد مسودة شراء" else "إعداد فاتورة شراء",
               fontWeight = FontWeight.Bold,
               fontSize = 18.sp,
               color = MaterialTheme.colorScheme.onSurface
@@ -2542,7 +2729,7 @@ fun PosScreen(
 
           Spacer(modifier = Modifier.height(16.dp))
 
-          // اختيار المورد
+          // الطرف للشراء منه (مورد أو عميل)
           Column(
             modifier = Modifier
               .fillMaxWidth()
@@ -2551,26 +2738,61 @@ fun PosScreen(
               .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
           ) {
-            Text(
-              text = "اختيار المورد:",
-              fontWeight = FontWeight.Bold,
-              fontSize = 13.sp,
-              color = MaterialTheme.colorScheme.onSurface
-            )
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Text(
+                text = "الطرف للشراء منه (مورد أو عميل):",
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurface
+              )
+              if (selectedSupLocal != null) {
+                Surface(
+                  color = Color(0xFFDCFCE7),
+                  border = BorderStroke(1.dp, Color(0xFF86EFAC)),
+                  shape = RoundedCornerShape(5.dp)
+                ) {
+                  Text(
+                    "مورد",
+                    color = Color(0xFF15803D),
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                  )
+                }
+              } else if (selectedCustLocal != null) {
+                Surface(
+                  color = Color(0xFFE0F2FE),
+                  border = BorderStroke(1.dp, Color(0xFF7DD3FC)),
+                  shape = RoundedCornerShape(5.dp)
+                ) {
+                  Text(
+                    "عميل",
+                    color = Color(0xFF0369A1),
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                  )
+                }
+              }
+            }
 
             Row(
               modifier = Modifier.fillMaxWidth(),
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-              // Selected Supplier Display Box
+              // Selected Party Display Box
               Surface(
                 onClick = { showSupPicker = true },
                 modifier = Modifier
                   .weight(1f)
                   .height(48.dp),
                 shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                border = BorderStroke(1.dp, if (selectedCustLocal != null) Color(0xFF0284C7) else MaterialTheme.colorScheme.primary),
                 color = MaterialTheme.colorScheme.surface
               ) {
                 Row(
@@ -2580,20 +2802,57 @@ fun PosScreen(
                   verticalAlignment = Alignment.CenterVertically,
                   horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                  Text(
-                    text = selectedSupLocal?.name ?: if (manualNameLocal.isNotBlank()) manualNameLocal else "مورد عام (غير مسجل)",
-                    fontWeight = if (selectedSupLocal != null || manualNameLocal.isNotBlank()) FontWeight.Bold else FontWeight.Normal,
-                    fontSize = 13.sp,
-                    color = if (selectedSupLocal != null || manualNameLocal.isNotBlank()) MaterialTheme.colorScheme.onSurface else Color.Gray,
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                  )
+                  Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f)
+                  ) {
+                    Icon(
+                      imageVector = when {
+                        selectedSupLocal != null -> Icons.Default.Business
+                        selectedCustLocal != null -> Icons.Default.Person
+                        manualPartyRoleLocal == "customer" && manualNameLocal.isNotBlank() -> Icons.Default.Person
+                        else -> Icons.Default.Business
+                      },
+                      contentDescription = null,
+                      tint = when {
+                        selectedSupLocal != null -> Color(0xFF16A34A)
+                        selectedCustLocal != null -> Color(0xFF0284C7)
+                        manualNameLocal.isNotBlank() -> if (manualPartyRoleLocal == "customer") Color(0xFF0284C7) else Color(0xFF16A34A)
+                        else -> Color.Gray
+                      },
+                      modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                      text = when {
+                        selectedSupLocal != null -> "${selectedSupLocal!!.name} (مورد)"
+                        selectedCustLocal != null -> "${selectedCustLocal!!.name} (عميل)"
+                        manualNameLocal.isNotBlank() -> "$manualNameLocal (${if (manualPartyRoleLocal == "customer") "عميل يدوي" else "مورد يدوي"})"
+                        else -> "طرف عام (نقدي بدون تسجيل حساب)"
+                      },
+                      fontWeight = if (selectedSupLocal != null || selectedCustLocal != null || manualNameLocal.isNotBlank()) FontWeight.Bold else FontWeight.Normal,
+                      fontSize = 12.5.sp,
+                      color = when {
+                        selectedSupLocal != null -> Color(0xFF15803D)
+                        selectedCustLocal != null -> Color(0xFF0369A1)
+                        manualNameLocal.isNotBlank() -> MaterialTheme.colorScheme.onSurface
+                        else -> Color.Gray
+                      },
+                      maxLines = 1,
+                      overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                  }
 
-                  if (selectedSupLocal != null || manualNameLocal.isNotEmpty()) {
+                  if (selectedSupLocal != null || selectedCustLocal != null || manualNameLocal.isNotEmpty()) {
                     IconButton(
                       onClick = {
                         selectedSupLocal = null
+                        selectedCustLocal = null
                         manualNameLocal = ""
+                        viewModel.setSelectedSupplier(null)
+                        viewModel.selectCustomer(null)
+                        viewModel.setManualSupplierName("")
+                        viewModel.setManualCustomerName("")
                       },
                       modifier = Modifier.size(28.dp)
                     ) {
@@ -2603,7 +2862,7 @@ fun PosScreen(
                 }
               }
 
-              // Supplier Picker Button
+              // Party Picker Button
               Surface(
                 onClick = { showSupPicker = true },
                 shape = RoundedCornerShape(12.dp),
@@ -2611,16 +2870,16 @@ fun PosScreen(
                 modifier = Modifier.size(48.dp)
               ) {
                 Box(contentAlignment = Alignment.Center) {
-                  Icon(Icons.Default.ReceiptLong, contentDescription = "قائمة الموردين", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(22.dp))
+                  Icon(Icons.Default.People, contentDescription = "قائمة الأطراف", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(22.dp))
                 }
               }
             }
 
-            if (selectedSupLocal == null) {
+            if (selectedSupLocal == null && selectedCustLocal == null) {
               OutlinedTextField(
                 value = manualNameLocal,
                 onValueChange = { manualNameLocal = it },
-                placeholder = { Text("أو ادخل اسم المورد يدوياً...", fontSize = 13.sp, color = Color.Gray) },
+                placeholder = { Text("أو ادخل اسم الطرف يدوياً...", fontSize = 13.sp, color = Color.Gray) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
@@ -2629,7 +2888,7 @@ fun PosScreen(
                   focusedBorderColor = MaterialTheme.colorScheme.primary
                 )
               )
-            } else {
+            } else if (selectedSupLocal != null) {
               // Selected Supplier Balance and Statement Button
               val supTx = allSupplierTransactions.filter { it.supplierId == selectedSupLocal!!.id }
               val totalDebit = supTx.filter { it.transactionType == "شراء" }.sumOf { it.amount }
@@ -2639,29 +2898,156 @@ fun PosScreen(
               Row(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .padding(top = 4.dp),
+                  .padding(top = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
               ) {
-                Button(
-                  onClick = { showStatementForSup = selectedSupLocal },
-                  colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                  shape = RoundedCornerShape(10.dp),
-                  contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                  modifier = Modifier.height(36.dp)
+                // Balance Badge
+                Surface(
+                  modifier = Modifier
+                    .weight(1f)
+                    .height(38.dp),
+                  shape = RoundedCornerShape(8.dp),
+                  color = Color(0xFFDCFCE7),
+                  border = BorderStroke(1.dp, Color(0xFF86EFAC))
                 ) {
-                  Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(16.dp))
-                    Text("كشف حساب المورد", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
+                  Row(
+                    modifier = Modifier
+                      .fillMaxSize()
+                      .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                  ) {
+                    Text(
+                      text = "رصيد المورد: ",
+                      fontSize = 11.sp,
+                      fontWeight = FontWeight.Medium,
+                      color = Color(0xFF15803D)
+                    )
+                    Text(
+                      text = "${formatMoney(supBalance)} $currencySymbol",
+                      fontSize = 11.5.sp,
+                      fontWeight = FontWeight.Bold,
+                      color = if (supBalance > 0) Color(0xFF15803D) else if (supBalance < 0) Color(0xFFDC2626) else MaterialTheme.colorScheme.onSurface,
+                      maxLines = 1
+                    )
                   }
                 }
 
-                Text(
-                  text = "رصيد الحساب: ${formatMoney(supBalance)} $currencySymbol",
-                  fontSize = 12.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = MaterialTheme.colorScheme.primary
-                )
+                // Statement Button
+                Button(
+                  onClick = {
+                    selectedSupLocal?.let { sup ->
+                      viewModel.setSelectedSupplier(sup.id)
+                      viewModel.navigateToSupplierStatement(sup)
+                      showPurchaseDialog = false
+                      onNavigateTab("statements")
+                    }
+                  },
+                  colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
+                  shape = RoundedCornerShape(8.dp),
+                  contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                  modifier = Modifier.height(38.dp)
+                ) {
+                  Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                  ) {
+                    Icon(
+                      Icons.Default.ReceiptLong,
+                      contentDescription = null,
+                      tint = Color.White,
+                      modifier = Modifier.size(15.dp)
+                    )
+                    Text(
+                      "كشف حساب مورد",
+                      fontSize = 11.sp,
+                      fontWeight = FontWeight.Bold,
+                      color = Color.White
+                    )
+                  }
+                }
+              }
+            } else if (selectedCustLocal != null) {
+              // Selected Customer Balance and Statement Button
+              val custTx = allCustomerTransactions.filter { it.customerId == selectedCustLocal!!.id }
+              val custInvoices = allInvoicesState.filter { it.customerId == selectedCustLocal!!.id && !it.isDraft }
+              val totalDebit = custInvoices.filter { !it.isPurchase }.sumOf { it.total } + custTx.filter { it.transactionType == "بيع" }.sumOf { it.amount }
+              val totalCredit = custInvoices.filter { !it.isPurchase }.sumOf { it.paidAmount } + custInvoices.filter { it.isPurchase }.sumOf { it.total } + custTx.filter { it.transactionType in listOf("دفعة", "شراء") }.sumOf { it.amount }
+              val custBalance = totalDebit - totalCredit
+
+              Row(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+              ) {
+                // Balance Badge
+                Surface(
+                  modifier = Modifier
+                    .weight(1f)
+                    .height(38.dp),
+                  shape = RoundedCornerShape(8.dp),
+                  color = Color(0xFFE0F2FE),
+                  border = BorderStroke(1.dp, Color(0xFF7DD3FC))
+                ) {
+                  Row(
+                    modifier = Modifier
+                      .fillMaxSize()
+                      .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                  ) {
+                    Text(
+                      text = "رصيد العميل: ",
+                      fontSize = 11.sp,
+                      fontWeight = FontWeight.Medium,
+                      color = Color(0xFF0369A1)
+                    )
+                    Text(
+                      text = "${formatMoney(custBalance)} $currencySymbol",
+                      fontSize = 11.5.sp,
+                      fontWeight = FontWeight.Bold,
+                      color = if (custBalance > 0) Color(0xFFDC2626) else if (custBalance < 0) Color(0xFF15803D) else MaterialTheme.colorScheme.onSurface,
+                      maxLines = 1
+                    )
+                  }
+                }
+
+                // Statement Button
+                Button(
+                  onClick = {
+                    selectedCustLocal?.let { cust ->
+                      viewModel.selectCustomer(cust.id, cust)
+                      viewModel.navigateToCustomerStatement(cust)
+                      showPurchaseDialog = false
+                      onNavigateTab("statements")
+                    }
+                  },
+                  colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                  shape = RoundedCornerShape(8.dp),
+                  contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                  modifier = Modifier.height(38.dp)
+                ) {
+                  Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                  ) {
+                    Icon(
+                      Icons.Default.ReceiptLong,
+                      contentDescription = null,
+                      tint = Color.White,
+                      modifier = Modifier.size(15.dp)
+                    )
+                    Text(
+                      "كشف حساب عميل",
+                      fontSize = 11.sp,
+                      fontWeight = FontWeight.Bold,
+                      color = Color.White
+                    )
+                  }
+                }
               }
             }
           }
@@ -2786,13 +3172,36 @@ fun PosScreen(
           // Start Invoice Button
           Button(
             onClick = {
+              viewModel.clearCart()
+              viewModel.setDiscount(0.0)
               if (selectedSupLocal != null) {
-                viewModel.setSelectedSupplier(selectedSupLocal!!.id)
+                viewModel.setSelectedSupplier(selectedSupLocal!!.id, selectedSupLocal)
+                viewModel.selectCustomer(null)
+                viewModel.setManualSupplierName("")
+                viewModel.setManualCustomerName("")
+              } else if (selectedCustLocal != null) {
+                viewModel.selectCustomer(selectedCustLocal!!.id, selectedCustLocal)
+                viewModel.setSelectedSupplier(null)
+                viewModel.setManualSupplierName("")
+                viewModel.setManualCustomerName("")
+              } else if (manualNameLocal.isNotBlank()) {
+                if (manualPartyRoleLocal == "supplier") {
+                  viewModel.setManualSupplierName(manualNameLocal)
+                  viewModel.setSelectedSupplier(null)
+                  viewModel.selectCustomer(null)
+                  viewModel.setManualCustomerName("")
+                } else {
+                  viewModel.setManualCustomerName(manualNameLocal)
+                  viewModel.selectCustomer(null)
+                  viewModel.setSelectedSupplier(null)
+                  viewModel.setManualSupplierName("")
+                }
               } else {
                 viewModel.setSelectedSupplier(null)
-                viewModel.setManualSupplierName(manualNameLocal)
+                viewModel.selectCustomer(null)
+                viewModel.setManualSupplierName("")
+                viewModel.setManualCustomerName("")
               }
-              viewModel.clearCart()
               viewModel.setupPaymentMethod.value = paymentTypeLocal
               viewModel.setupCheckNumber.value = checkNumberLocal
               viewModel.setupCheckBankName.value = checkBankLocal
@@ -2807,72 +3216,423 @@ fun PosScreen(
             shape = RoundedCornerShape(25.dp),
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
           ) {
-            Text(if (isPurchaseReturn) "البدء بمرتجع المشتريات" else "البدء بالفاتورة", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onPrimary)
+            Text(if (isPurchaseReturn) "البدء بمرتجع المشتريات" else if (isDraftMode) "البدء بمسودة الشراء" else "البدء بفاتورة الشراء", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onPrimary)
           }
         }
       }
     }
 
-    // Supplier Picker Dialog
+    // Unified Party Picker Dialog for Purchase Setup (Supplier or Customer)
     if (showSupPicker) {
+      val q = supSearchQuery.trim()
+
+      data class PurchasePartyItem(
+        val id: Int,
+        val name: String,
+        val phone: String,
+        val isSupplier: Boolean,
+        val supplierObj: Supplier? = null,
+        val customerObj: Customer? = null
+      )
+
+      val filteredParties = remember(suppliers, customers, partyFilterTabLocal, q) {
+        val sItems = suppliers.map { PurchasePartyItem(it.id, it.name, it.phone, isSupplier = true, supplierObj = it) }
+        val cItems = customers.map { PurchasePartyItem(it.id, it.name, it.phone, isSupplier = false, customerObj = it) }
+        val raw = when (partyFilterTabLocal) {
+          "suppliers" -> sItems
+          "customers" -> cItems
+          else -> sItems + cItems
+        }
+        if (q.isBlank()) raw
+        else raw.filter { it.name.contains(q, ignoreCase = true) || it.phone.contains(q) }
+      }
+
       AlertDialog(
         onDismissRequest = { showSupPicker = false },
-        title = { Text("اختر المورد ", fontWeight = FontWeight.Bold) },
+        title = {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+              Icon(Icons.Default.ShoppingCart, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+              Text("تحديد الطرف للشراء (مورد أو عميل)", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            }
+            IconButton(onClick = { showSupPicker = false }) {
+              Icon(Icons.Default.Close, contentDescription = "إغلاق")
+            }
+          }
+        },
         text = {
           Column(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+              .fillMaxWidth()
+              .heightIn(max = 480.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
           ) {
-            OutlinedTextField(
-              value = supSearchQuery,
-              onValueChange = { supSearchQuery = it },
-              placeholder = { Text("بحث عن مورد...") },
-              leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            // Tabs Row
+            LazyRow(
               modifier = Modifier.fillMaxWidth(),
-              singleLine = true,
-              shape = RoundedCornerShape(12.dp)
-            )
-
-            val filtered = suppliers.filter {
-              it.name.contains(supSearchQuery, ignoreCase = true) ||
-              it.phone.contains(supSearchQuery)
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              item {
+                FilterChip(
+                  selected = partyFilterTabLocal == "all",
+                  onClick = { partyFilterTabLocal = "all" },
+                  label = { Text("الكل (${suppliers.size + customers.size})", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                  colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                  )
+                )
+              }
+              item {
+                FilterChip(
+                  selected = partyFilterTabLocal == "suppliers",
+                  onClick = { partyFilterTabLocal = "suppliers" },
+                  label = { Text("الموردين (${suppliers.size})", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                  leadingIcon = { Icon(Icons.Default.Business, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color(0xFF16A34A)) },
+                  colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = Color(0xFFDCFCE7),
+                    selectedLabelColor = Color(0xFF15803D)
+                  )
+                )
+              }
+              item {
+                FilterChip(
+                  selected = partyFilterTabLocal == "customers",
+                  onClick = { partyFilterTabLocal = "customers" },
+                  label = { Text("العملاء (${customers.size})", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                  leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color(0xFF0284C7)) },
+                  colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = Color(0xFFE0F2FE),
+                    selectedLabelColor = Color(0xFF0369A1)
+                  )
+                )
+              }
+              item {
+                FilterChip(
+                  selected = partyFilterTabLocal == "new_party",
+                  onClick = { partyFilterTabLocal = "new_party" },
+                  label = { Text("طرف جديد", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                  leadingIcon = { Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                )
+              }
             }
 
-            if (filtered.isEmpty()) {
-              Text("لا يوجد موردين مطبقين للبحث", color = Color.Gray, modifier = Modifier.padding(12.dp))
-            } else {
+            if (partyFilterTabLocal != "new_party") {
+              // Search input
+              OutlinedTextField(
+                value = supSearchQuery,
+                onValueChange = { supSearchQuery = it },
+                placeholder = { Text("ابحث باسم المورد أو العميل أو الهاتف...", fontSize = 12.sp) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                trailingIcon = {
+                  if (supSearchQuery.isNotBlank()) {
+                    IconButton(onClick = { supSearchQuery = "" }) {
+                      Icon(Icons.Default.Clear, contentDescription = "مسح", modifier = Modifier.size(16.dp))
+                    }
+                  }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(10.dp)
+              )
+
+              // Quick Action Cards for direct search input
+              if (q.isNotBlank()) {
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                  // Apply as Supplier
+                  Surface(
+                    onClick = {
+                      val matchedSup = suppliers.find { it.name.trim().equals(q, ignoreCase = true) }
+                      if (matchedSup != null) {
+                        selectedSupLocal = matchedSup
+                        manualNameLocal = ""
+                      } else {
+                        selectedSupLocal = null
+                        manualNameLocal = q
+                        manualPartyRoleLocal = "supplier"
+                      }
+                      selectedCustLocal = null
+                      showSupPicker = false
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFDCFCE7),
+                    border = BorderStroke(1.dp, Color(0xFF16A34A)),
+                    modifier = Modifier.weight(1f)
+                  ) {
+                    Row(
+                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                      Icon(Icons.Default.Business, contentDescription = null, tint = Color(0xFF16A34A), modifier = Modifier.size(16.dp))
+                      Text("تطبيق كـ مورد", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF15803D), maxLines = 1)
+                    }
+                  }
+
+                  // Apply as Customer
+                  Surface(
+                    onClick = {
+                      val matchedCust = customers.find { it.name.trim().equals(q, ignoreCase = true) }
+                      if (matchedCust != null) {
+                        selectedCustLocal = matchedCust
+                        manualNameLocal = ""
+                      } else {
+                        selectedCustLocal = null
+                        manualNameLocal = q
+                        manualPartyRoleLocal = "customer"
+                      }
+                      selectedSupLocal = null
+                      showSupPicker = false
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFE0F2FE),
+                    border = BorderStroke(1.dp, Color(0xFF0284C7)),
+                    modifier = Modifier.weight(1f)
+                  ) {
+                    Row(
+                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                      Icon(Icons.Default.Person, contentDescription = null, tint = Color(0xFF0284C7), modifier = Modifier.size(16.dp))
+                      Text("تطبيق كـ عميل", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0369A1), maxLines = 1)
+                    }
+                  }
+                }
+              }
+
+              // Parties List
               LazyColumn(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .heightIn(max = 280.dp),
+                  .weight(1f, fill = false)
+                  .heightIn(max = 260.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
               ) {
-                items(filtered) { sup ->
-                  Card(
-                    modifier = Modifier
-                      .fillMaxWidth()
-                      .clickable {
-                        selectedSupLocal = sup
-                        manualNameLocal = ""
-                        showSupPicker = false
-                      },
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                // General party option
+                item {
+                  val isGen = (selectedSupLocal == null && selectedCustLocal == null && manualNameLocal.isBlank())
+                  Surface(
+                    onClick = {
+                      selectedSupLocal = null
+                      selectedCustLocal = null
+                      manualNameLocal = ""
+                      showSupPicker = false
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isGen) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, if (isGen) MaterialTheme.colorScheme.primary else Color.Transparent),
+                    modifier = Modifier.fillMaxWidth()
                   ) {
                     Row(
-                      modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(12.dp),
+                      modifier = Modifier.padding(10.dp),
                       horizontalArrangement = Arrangement.SpaceBetween,
                       verticalAlignment = Alignment.CenterVertically
                     ) {
-                      Column {
-                        Text(sup.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        if (sup.phone.isNotEmpty()) {
-                          Text(sup.phone, fontSize = 12.sp, color = Color.Gray)
+                      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RadioButton(selected = isGen, onClick = {
+                          selectedSupLocal = null
+                          selectedCustLocal = null
+                          manualNameLocal = ""
+                          showSupPicker = false
+                        })
+                        Text("مورد عام (شراء نقدي بدون تسجيل حساب)", fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
+                      }
+                    }
+                  }
+                }
+
+                items(filteredParties) { item ->
+                  val isSelected = if (item.isSupplier) {
+                    selectedSupLocal?.id == item.id
+                  } else {
+                    selectedCustLocal?.id == item.id
+                  }
+
+                  Surface(
+                    onClick = {
+                      if (item.isSupplier) {
+                        selectedSupLocal = item.supplierObj
+                        selectedCustLocal = null
+                        manualNameLocal = ""
+                      } else {
+                        selectedCustLocal = item.customerObj
+                        selectedSupLocal = null
+                        manualNameLocal = ""
+                      }
+                      showSupPicker = false
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth()
+                  ) {
+                    Row(
+                      modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                      horizontalArrangement = Arrangement.SpaceBetween,
+                      verticalAlignment = Alignment.CenterVertically
+                    ) {
+                      Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                      ) {
+                        RadioButton(
+                          selected = isSelected,
+                          onClick = {
+                            if (item.isSupplier) {
+                              selectedSupLocal = item.supplierObj
+                              selectedCustLocal = null
+                              manualNameLocal = ""
+                            } else {
+                              selectedCustLocal = item.customerObj
+                              selectedSupLocal = null
+                              manualNameLocal = ""
+                            }
+                            showSupPicker = false
+                          }
+                        )
+                        Icon(
+                          imageVector = if (item.isSupplier) Icons.Default.Business else Icons.Default.Person,
+                          contentDescription = null,
+                          tint = if (item.isSupplier) Color(0xFF16A34A) else Color(0xFF0284C7),
+                          modifier = Modifier.size(18.dp)
+                        )
+                        Column {
+                          Text(item.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                          if (item.phone.isNotBlank()) {
+                            Text(item.phone, fontSize = 11.sp, color = Color.Gray)
+                          }
                         }
                       }
-                      Icon(Icons.Default.ChevronLeft, contentDescription = null, tint = Color.Gray)
+
+                      // Distinction Badge
+                      if (item.isSupplier) {
+                        Surface(
+                          color = Color(0xFFDCFCE7),
+                          border = BorderStroke(1.dp, Color(0xFF86EFAC)),
+                          shape = RoundedCornerShape(5.dp)
+                        ) {
+                          Text(
+                            "مورد",
+                            color = Color(0xFF15803D),
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                          )
+                        }
+                      } else {
+                        Surface(
+                          color = Color(0xFFE0F2FE),
+                          border = BorderStroke(1.dp, Color(0xFF7DD3FC)),
+                          shape = RoundedCornerShape(5.dp)
+                        ) {
+                          Text(
+                            "عميل",
+                            color = Color(0xFF0369A1),
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                          )
+                        }
+                      }
                     }
+                  }
+                }
+              }
+            } else {
+              // "new_party" Tab in Purchase Setup
+              Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                  value = manualNameLocal,
+                  onValueChange = { manualNameLocal = it },
+                  label = { Text("اسم الطرف الجديد *", fontSize = 12.5.sp) },
+                  singleLine = true,
+                  modifier = Modifier.fillMaxWidth(),
+                  shape = RoundedCornerShape(10.dp)
+                )
+
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.spacedBy(8.dp),
+                  verticalAlignment = Alignment.CenterVertically
+                ) {
+                  Text("نوع الطرف:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                  FilterChip(
+                    selected = manualPartyRoleLocal == "supplier",
+                    onClick = { manualPartyRoleLocal == "supplier" },
+                    label = { Text("مورد", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                    leadingIcon = { Icon(Icons.Default.Business, contentDescription = null, modifier = Modifier.size(15.dp)) },
+                    colors = FilterChipDefaults.filterChipColors(
+                      selectedContainerColor = Color(0xFFDCFCE7),
+                      selectedLabelColor = Color(0xFF15803D)
+                    )
+                  )
+                  FilterChip(
+                    selected = manualPartyRoleLocal == "customer",
+                    onClick = { manualPartyRoleLocal = "customer" },
+                    label = { Text("عميل", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(15.dp)) },
+                    colors = FilterChipDefaults.filterChipColors(
+                      selectedContainerColor = Color(0xFFE0F2FE),
+                      selectedLabelColor = Color(0xFF0369A1)
+                    )
+                  )
+                }
+
+                if (manualNameLocal.trim().isNotBlank()) {
+                  val trimmedName = manualNameLocal.trim()
+                  Button(
+                    onClick = {
+                      selectedSupLocal = null
+                      selectedCustLocal = null
+                      showSupPicker = false
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                  ) {
+                    Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("تطبيق \"$trimmedName\" على هذه الفاتورة", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                  }
+
+                  OutlinedButton(
+                    onClick = {
+                      if (manualPartyRoleLocal == "supplier") {
+                        viewModel.addSupplierAndSelect(trimmedName) {
+                          selectedSupLocal = suppliers.find { it.name.trim().equals(trimmedName, ignoreCase = true) }
+                          selectedCustLocal = null
+                          manualNameLocal = ""
+                          showSupPicker = false
+                        }
+                      } else {
+                        viewModel.addCustomerAndSelect(trimmedName) {
+                          selectedCustLocal = customers.find { it.name.trim().equals(trimmedName, ignoreCase = true) }
+                          selectedSupLocal = null
+                          manualNameLocal = ""
+                          showSupPicker = false
+                        }
+                      }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp)
+                  ) {
+                    Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                      text = if (manualPartyRoleLocal == "supplier") "حفظ في قائمة الموردين واختياره" else "حفظ في قائمة العملاء واختياره",
+                      fontWeight = FontWeight.Bold,
+                      fontSize = 11.5.sp
+                    )
                   }
                 }
               }
@@ -2881,7 +3641,7 @@ fun PosScreen(
         },
         confirmButton = {
           TextButton(onClick = { showSupPicker = false }) {
-            Text("إلغاء")
+            Text("إغلاق")
           }
         }
       )
@@ -2992,9 +3752,15 @@ fun PosScreen(
     )
   }
 
+  var showDamagedCheckDetailsDialog by remember { mutableStateOf(false) }
+  var damagedCheckNumber by remember { mutableStateOf("") }
+  var damagedCheckBank by remember { mutableStateOf("") }
+  var damagedCheckDate by remember { mutableStateOf(System.currentTimeMillis()) }
+
   // --- 4. Returns & Damaged Invoices Dialog ---
   if (showReturnsDialog) {
     var selectedReturnType by remember { mutableStateOf<String?>(null) }
+    var damagedDeductionAccount by remember { mutableStateOf<String?>(null) }
     var returnAmountStr by remember { mutableStateOf("") }
     var returnReasonStr by remember { mutableStateOf("") }
 
@@ -3018,7 +3784,7 @@ fun PosScreen(
             horizontalAlignment = Alignment.CenterHorizontally
           ) {
             Text(
-              text = "فواتير المرتجع",
+              text = "فواتير المرتجع والتالف",
               fontWeight = FontWeight.Bold,
               fontSize = 20.sp,
               color = MaterialTheme.colorScheme.primary,
@@ -3038,8 +3804,21 @@ fun PosScreen(
                   .weight(1f)
                   .clip(RoundedCornerShape(16.dp))
                   .clickable {
+                    viewModel.damagedCreditAccount.value = null
+                    viewModel.clearCart()
+                    viewModel.selectCustomer(null)
+                    viewModel.setManualCustomerName("")
+                    viewModel.setSelectedSupplier(null)
+                    viewModel.setManualSupplierName("")
+                    viewModel.setDiscount(0.0)
+                    viewModel.setupCustomDate.value = null
+                    viewModel.setupPaymentMethod.value = "نقدي"
+                    viewModel.setupCheckNumber.value = ""
+                    viewModel.setupCheckBankName.value = ""
                     showReturnsDialog = false
                     isSalesReturn = true
+                    isDraftMode = false
+                    salesSetupSessionId++
                     showSalesSetupDialog = true
                   }
                   .padding(vertical = 12.dp, horizontal = 4.dp),
@@ -3067,6 +3846,8 @@ fun PosScreen(
                   .weight(1f)
                   .clip(RoundedCornerShape(16.dp))
                   .clickable {
+                    viewModel.clearCart()
+                    viewModel.setDiscount(0.0)
                     showReturnsDialog = false
                     isPurchaseReturn = true
                     showPurchaseDialog = true
@@ -3095,7 +3876,10 @@ fun PosScreen(
                 modifier = Modifier
                   .weight(1f)
                   .clip(RoundedCornerShape(16.dp))
-                  .clickable { selectedReturnType = "فاتورة تالف" }
+                  .clickable {
+                    selectedReturnType = "فاتورة تالف"
+                    damagedDeductionAccount = null
+                  }
                   .padding(vertical = 12.dp, horizontal = 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
               ) {
@@ -3134,13 +3918,73 @@ fun PosScreen(
           }
         }
       }
-    } else {
-      val currentType = selectedReturnType ?: "مرتجع مبيعات"
+    } else if (selectedReturnType == "فاتورة تالف" && damagedDeductionAccount == null) {
       AlertDialog(
         onDismissRequest = { selectedReturnType = null },
         title = {
           Text(
-            text = "تسجيل $currentType ",
+            text = "اختر حساب خصم التالف (منين يتخصم؟)",
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp
+          )
+        },
+        text = {
+          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("حدد مكان الخصم (الصندوق أو الشيكات):", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(modifier = Modifier.height(4.dp))
+            val deductionOptions = listOf("الصندوق الرئيسي", "الشيكات")
+            deductionOptions.forEach { opt ->
+              Surface(
+                onClick = {
+                  if (opt == "الصندوق الرئيسي") {
+                    viewModel.damagedCreditAccount.value = "الصندوق الرئيسي"
+                    viewModel.clearCart()
+                    viewModel.setDiscount(0.0)
+                    viewModel.selectCustomer(null)
+                    viewModel.setManualCustomerName("تالف مخزون داخلي")
+                    viewModel.setupPaymentMethod.value = "نقدي"
+                    isSalesReturn = false
+                    showReturnsDialog = false
+                    selectedReturnType = null
+                    activePosView = "terminal"
+                  } else {
+                    damagedDeductionAccount = "الشيكات"
+                    showDamagedCheckDetailsDialog = true
+                  }
+                },
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth()
+              ) {
+                Row(
+                  modifier = Modifier.padding(12.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                  Icon(Icons.Default.AccountBalance, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                  Text(text = opt, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+              }
+            }
+          }
+        },
+        confirmButton = {},
+        dismissButton = {
+          TextButton(onClick = { selectedReturnType = null }) {
+            Text("رجوع")
+          }
+        }
+      )
+    } else {
+      val currentType = selectedReturnType ?: "مرتجع مبيعات"
+      AlertDialog(
+        onDismissRequest = {
+          selectedReturnType = null
+          damagedDeductionAccount = null
+        },
+        title = {
+          Text(
+            text = if (currentType == "فاتورة تالف") "تسجيل فاتورة تالف (يخصم من: $damagedDeductionAccount)" else "تسجيل $currentType",
             fontWeight = FontWeight.Bold,
             fontSize = 17.sp,
             color = MaterialTheme.colorScheme.onSurface
@@ -3165,7 +4009,7 @@ fun PosScreen(
               onValueChange = { returnReasonStr = it },
               label = {
                 Text(
-                  if (currentType == "فاتورة تالف") "تفاصيل الأصناف والتالف *"
+                  if (currentType == "فاتورة تالف") "تفاصيل الأصناف والتالف وأسباب التلف *"
                   else "سبب المرتجع / التفاصيل *"
                 )
               },
@@ -3183,23 +4027,27 @@ fun PosScreen(
                 return@Button
               }
               val reason = returnReasonStr.trim().ifEmpty { currentType }
-              val creditAcc = if (currentType == "فاتورة تالف") "توالف ومفقودات" else "الصندوق الرئيسي"
+              val creditAcc = if (currentType == "فاتورة تالف") (damagedDeductionAccount ?: "المخزون") else "الصندوق الرئيسي"
 
               viewModel.addExpenseInvoice(
-                description = "$currentType: $reason",
+                description = if (currentType == "فاتورة تالف") "فاتورة تالف (يخصم من $creditAcc): $reason" else "$currentType: $reason",
                 amount = amt,
                 creditAccount = creditAcc
               )
               showReturnsDialog = false
               selectedReturnType = null
-              viewModel.showToast("تم تسجيل $currentType بنجاح ")
+              damagedDeductionAccount = null
+              viewModel.showToast("تم تسجيل $currentType بنجاح وترحيله للمصاريف في الميزان")
             }
           ) {
-            Text("حفظ وتسجيل ")
+            Text("حفظ وترحيل للمصاريف")
           }
         },
         dismissButton = {
-          TextButton(onClick = { selectedReturnType = null }) {
+          TextButton(onClick = {
+            selectedReturnType = null
+            damagedDeductionAccount = null
+          }) {
             Text("رجوع")
           }
         }
@@ -3207,26 +4055,127 @@ fun PosScreen(
     }
   }
 
+  // --- 5. Check details for damaged invoice dialog ---
+  if (showDamagedCheckDetailsDialog) {
+    var checkNumInput by remember { mutableStateOf("") }
+    var checkBankInput by remember { mutableStateOf("") }
+    val defaultCal = remember { java.util.Calendar.getInstance() }
+    var checkDateMillis by remember { mutableStateOf(defaultCal.timeInMillis) }
+    val dateFmt = remember { java.text.SimpleDateFormat("dd/MM/yyyy", java.util.Locale.US) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    val checkDatePickerDialog = remember {
+      val cal = java.util.Calendar.getInstance()
+      android.app.DatePickerDialog(
+        context,
+        { _, y, m, d ->
+          val c = java.util.Calendar.getInstance()
+          c.set(y, m, d)
+          checkDateMillis = c.timeInMillis
+        },
+        cal.get(java.util.Calendar.YEAR),
+        cal.get(java.util.Calendar.MONTH),
+        cal.get(java.util.Calendar.DAY_OF_MONTH)
+      )
+    }
+
+    AlertDialog(
+      onDismissRequest = {
+        showDamagedCheckDetailsDialog = false
+      },
+      title = {
+        Text("بيانات الشيك لخصم التالف", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+      },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+          Text("أدخل تفاصيل الشيك الذي ستخصم منه قيمة التالف:", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+          OutlinedTextField(
+            value = checkNumInput,
+            onValueChange = { checkNumInput = it },
+            label = { Text("رقم الشيك *") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+          )
+          OutlinedTextField(
+            value = checkBankInput,
+            onValueChange = { checkBankInput = it },
+            label = { Text("اسم البنك *") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+          )
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clickable { checkDatePickerDialog.show() }
+              .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+          ) {
+            Text("تاريخ الاستحقاق:", fontWeight = FontWeight.Medium, fontSize = 14.sp)
+            Text(dateFmt.format(java.util.Date(checkDateMillis)), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+          }
+        }
+      },
+      confirmButton = {
+        Button(
+          onClick = {
+            if (checkNumInput.isBlank() || checkBankInput.isBlank()) {
+              viewModel.showToast("يرجى إدخال رقم الشيك واسم البنك")
+              return@Button
+            }
+            viewModel.damagedCreditAccount.value = "الشيكات"
+            viewModel.setupPaymentMethod.value = "شيك"
+            viewModel.setupCheckNumber.value = checkNumInput.trim()
+            viewModel.setupCheckBankName.value = checkBankInput.trim()
+            viewModel.setupCheckDate.value = checkDateMillis
+            viewModel.clearCart()
+            viewModel.setDiscount(0.0)
+            viewModel.selectCustomer(null)
+            viewModel.setManualCustomerName("تالف مخزون - شيك #${checkNumInput.trim()}")
+            isSalesReturn = false
+            showDamagedCheckDetailsDialog = false
+            showReturnsDialog = false
+            activePosView = "terminal"
+          }
+        ) {
+          Text("تأكيد ومتابعة لفاتورة التالف")
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = {
+          showDamagedCheckDetailsDialog = false
+        }) {
+          Text("إلغاء")
+        }
+      }
+    )
+  }
+
   // --- 6. Sales Invoice Setup Dialog ("إعداد الفاتورة") ---
   if (showSalesSetupDialog) {
-    var selectedCustLocal by remember { mutableStateOf<Customer?>(customers.find { it.id == selectedCustomerId }) }
-    var manualNameLocal by remember { mutableStateOf(viewModel.manualCustomerName.value) }
-    var paymentTypeLocal by remember { mutableStateOf("نقدي") }
-    var checkNumberLocal by remember { mutableStateOf("") }
-    var checkBankLocal by remember { mutableStateOf("") }
-    val defaultCal2 = remember { java.util.Calendar.getInstance() }
-    var checkDateLocal by remember { mutableStateOf(defaultCal2.timeInMillis) }
-    var notesLocal by remember { mutableStateOf("") }
-    var taxEnabledLocal by remember { mutableStateOf(taxPercent > 0) }
+    val suppliers by viewModel.allSuppliers.collectAsState(emptyList())
+    val allSupplierTransactions by viewModel.allSupplierTransactions.collectAsState(emptyList())
+    var selectedCustLocal by remember(salesSetupSessionId) { mutableStateOf<Customer?>(null) }
+    var selectedSupLocal by remember(salesSetupSessionId) { mutableStateOf<Supplier?>(null) }
+    var manualNameLocal by remember(salesSetupSessionId) { mutableStateOf("") }
+    var manualPartyRoleLocal by remember(salesSetupSessionId) { mutableStateOf("customer") }
+    var paymentTypeLocal by remember(salesSetupSessionId) { mutableStateOf("نقدي") }
+    var checkNumberLocal by remember(salesSetupSessionId) { mutableStateOf("") }
+    var checkBankLocal by remember(salesSetupSessionId) { mutableStateOf("") }
+    val defaultCal2 = remember(salesSetupSessionId) { java.util.Calendar.getInstance() }
+    var checkDateLocal by remember(salesSetupSessionId) { mutableStateOf(defaultCal2.timeInMillis) }
+    var notesLocal by remember(salesSetupSessionId) { mutableStateOf("") }
+    var taxEnabledLocal by remember(salesSetupSessionId) { mutableStateOf(false) }
     var showCustPicker by remember { mutableStateOf(false) }
     var showStatementForCust by remember { mutableStateOf<Customer?>(null) }
     var custSearchQuery by remember { mutableStateOf("") }
+    var partyFilterTabLocal by remember { mutableStateOf("all") }
     val allInvoiceItemsState by viewModel.allInvoiceItems.collectAsState(emptyList())
     var showPrintTypeDialogForCust by remember { mutableStateOf(false) }
     var pendingPrintActionForCust by remember { mutableStateOf("") }
 
     val context = androidx.compose.ui.platform.LocalContext.current
-    var customDateTime by remember { mutableStateOf(viewModel.setupCustomDate.value ?: System.currentTimeMillis()) }
+    var customDateTime by remember(salesSetupSessionId) { mutableStateOf(System.currentTimeMillis()) }
     val timeFormatter = remember { java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US) }
     val dateFormatter = remember { java.text.SimpleDateFormat("dd-MM-yyyy", java.util.Locale.US) }
     val timeStr = remember(customDateTime) { timeFormatter.format(java.util.Date(customDateTime)) }
@@ -3302,7 +4251,7 @@ fun PosScreen(
               Icon(Icons.Default.Close, contentDescription = "إغلاق", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text(
-              text = if (isSalesReturn) "إعداد فاتورة مرتجع مبيعات " else "إعداد الفاتورة",
+              text = if (isSalesReturn) "إعداد فاتورة مرتجع مبيعات " else if (isDraftMode) "إعداد مسودة مبيع" else "إعداد فاتورة مبيع",
               fontWeight = FontWeight.Bold,
               fontSize = 18.sp,
               color = MaterialTheme.colorScheme.onSurface
@@ -3417,26 +4366,63 @@ fun PosScreen(
               .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
           ) {
-            Text(
-              text = "اختيار العميل / الزبون:",
-              fontWeight = FontWeight.Bold,
-              fontSize = 13.sp,
-              color = MaterialTheme.colorScheme.onSurface
-            )
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.SpaceBetween,
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Text(
+                text = if (isSalesReturn) "اختيار الطرف لمرتجع المبيع (عميل أو مورد):" else "اختيار الطرف للمبيع (عميل أو مورد):",
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurface
+              )
+              if (selectedSupLocal != null) {
+                Surface(
+                  color = Color(0xFFDCFCE7),
+                  border = BorderStroke(1.dp, Color(0xFF86EFAC)),
+                  shape = RoundedCornerShape(5.dp)
+                ) {
+                  Row(
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                  ) {
+                    Icon(Icons.Default.Business, contentDescription = null, tint = Color(0xFF15803D), modifier = Modifier.size(12.dp))
+                    Text("مورد", color = Color(0xFF15803D), fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                  }
+                }
+              } else if (selectedCustLocal != null) {
+                Surface(
+                  color = Color(0xFFE0F2FE),
+                  border = BorderStroke(1.dp, Color(0xFF7DD3FC)),
+                  shape = RoundedCornerShape(5.dp)
+                ) {
+                  Row(
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                  ) {
+                    Icon(Icons.Default.Person, contentDescription = null, tint = Color(0xFF0369A1), modifier = Modifier.size(12.dp))
+                    Text("عميل", color = Color(0xFF0369A1), fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                  }
+                }
+              }
+            }
 
             Row(
               modifier = Modifier.fillMaxWidth(),
               verticalAlignment = Alignment.CenterVertically,
               horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-              // Selected Customer Display Box
+              // Selected Party Display Box
               Surface(
                 onClick = { showCustPicker = true },
                 modifier = Modifier
                   .weight(1f)
                   .height(48.dp),
                 shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                border = BorderStroke(1.dp, if (selectedSupLocal != null) Color(0xFF16A34A) else MaterialTheme.colorScheme.primary),
                 color = MaterialTheme.colorScheme.surface
               ) {
                 Row(
@@ -3446,20 +4432,57 @@ fun PosScreen(
                   verticalAlignment = Alignment.CenterVertically,
                   horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                  Text(
-                    text = selectedCustLocal?.name ?: if (manualNameLocal.isNotBlank()) manualNameLocal else "زبون عام (غير مسجل)",
-                    fontWeight = if (selectedCustLocal != null || manualNameLocal.isNotBlank()) FontWeight.Bold else FontWeight.Normal,
-                    fontSize = 13.sp,
-                    color = if (selectedCustLocal != null || manualNameLocal.isNotBlank()) MaterialTheme.colorScheme.onSurface else Color.Gray,
-                    maxLines = 1,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                  )
+                  Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f)
+                  ) {
+                    Icon(
+                      imageVector = when {
+                        selectedSupLocal != null -> Icons.Default.Business
+                        selectedCustLocal != null -> Icons.Default.Person
+                        manualNameLocal.isNotBlank() && manualPartyRoleLocal == "supplier" -> Icons.Default.Business
+                        else -> Icons.Default.Person
+                      },
+                      contentDescription = null,
+                      tint = when {
+                        selectedSupLocal != null -> Color(0xFF16A34A)
+                        selectedCustLocal != null -> Color(0xFF0284C7)
+                        manualNameLocal.isNotBlank() -> if (manualPartyRoleLocal == "supplier") Color(0xFF16A34A) else Color(0xFF0284C7)
+                        else -> Color.Gray
+                      },
+                      modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                      text = when {
+                        selectedCustLocal != null -> "${selectedCustLocal!!.name} (عميل)"
+                        selectedSupLocal != null -> "${selectedSupLocal!!.name} (مورد)"
+                        manualNameLocal.isNotBlank() -> "$manualNameLocal (${if (manualPartyRoleLocal == "supplier") "مورد يدوي" else "عميل يدوي"})"
+                        else -> "اختر العميل أو المورد / زبون عام..."
+                      },
+                      fontWeight = if (selectedCustLocal != null || selectedSupLocal != null || manualNameLocal.isNotBlank()) FontWeight.Bold else FontWeight.Normal,
+                      fontSize = 12.5.sp,
+                      color = when {
+                        selectedSupLocal != null -> Color(0xFF15803D)
+                        selectedCustLocal != null -> Color(0xFF0369A1)
+                        manualNameLocal.isNotBlank() -> MaterialTheme.colorScheme.onSurface
+                        else -> Color.Gray
+                      },
+                      maxLines = 1,
+                      overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                    )
+                  }
 
-                  if (selectedCustLocal != null || manualNameLocal.isNotEmpty()) {
+                  if (selectedCustLocal != null || selectedSupLocal != null || manualNameLocal.isNotEmpty()) {
                     IconButton(
                       onClick = {
                         selectedCustLocal = null
+                        selectedSupLocal = null
                         manualNameLocal = ""
+                        viewModel.selectCustomer(null)
+                        viewModel.setManualCustomerName("")
+                        viewModel.setSelectedSupplier(null)
+                        viewModel.setManualSupplierName("")
                       },
                       modifier = Modifier.size(28.dp)
                     ) {
@@ -3469,7 +4492,7 @@ fun PosScreen(
                 }
               }
 
-              // Customer Picker Button
+              // Customer / Party Picker Button
               Surface(
                 onClick = { showCustPicker = true },
                 shape = RoundedCornerShape(12.dp),
@@ -3477,16 +4500,16 @@ fun PosScreen(
                 modifier = Modifier.size(48.dp)
               ) {
                 Box(contentAlignment = Alignment.Center) {
-                  Icon(Icons.Default.ReceiptLong, contentDescription = "قائمة العملاء", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(22.dp))
+                  Icon(Icons.Default.ReceiptLong, contentDescription = "قائمة الأطراف", tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(22.dp))
                 }
               }
             }
 
-            if (selectedCustLocal == null) {
+            if (selectedCustLocal == null && selectedSupLocal == null) {
               OutlinedTextField(
                 value = manualNameLocal,
                 onValueChange = { manualNameLocal = it },
-                placeholder = { Text("أو ادخل اسم العميل يدوياً...", fontSize = 13.sp, color = Color.Gray) },
+                placeholder = { Text("أو ادخل اسم العميل أو المورد يدوياً...", fontSize = 13.sp, color = Color.Gray) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
@@ -3495,7 +4518,37 @@ fun PosScreen(
                   focusedBorderColor = MaterialTheme.colorScheme.primary
                 )
               )
-            } else {
+
+              if (manualNameLocal.isNotBlank()) {
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.spacedBy(8.dp),
+                  verticalAlignment = Alignment.CenterVertically
+                ) {
+                  Text("نوع الطرف:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                  FilterChip(
+                    selected = manualPartyRoleLocal == "customer",
+                    onClick = { manualPartyRoleLocal = "customer" },
+                    label = { Text("عميل", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(15.dp)) },
+                    colors = FilterChipDefaults.filterChipColors(
+                      selectedContainerColor = Color(0xFFE0F2FE),
+                      selectedLabelColor = Color(0xFF0369A1)
+                    )
+                  )
+                  FilterChip(
+                    selected = manualPartyRoleLocal == "supplier",
+                    onClick = { manualPartyRoleLocal = "supplier" },
+                    label = { Text("مورد", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                    leadingIcon = { Icon(Icons.Default.Business, contentDescription = null, modifier = Modifier.size(15.dp)) },
+                    colors = FilterChipDefaults.filterChipColors(
+                      selectedContainerColor = Color(0xFFDCFCE7),
+                      selectedLabelColor = Color(0xFF15803D)
+                    )
+                  )
+                }
+              }
+            } else if (selectedCustLocal != null) {
               // Selected Customer Balance and Statement Button
               val custInvoices = allInvoicesState.filter { it.customerId == selectedCustLocal!!.id && !it.isPurchase && !it.isDraft }
               val custTx = allCustomerTransactions.filter { it.customerId == selectedCustLocal!!.id }
@@ -3506,34 +4559,161 @@ fun PosScreen(
               Row(
                 modifier = Modifier
                   .fillMaxWidth()
-                  .padding(top = 4.dp),
+                  .padding(top = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
               ) {
-                Button(
-                  onClick = { showStatementForCust = selectedCustLocal },
-                  colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                  shape = RoundedCornerShape(10.dp),
-                  contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
-                  modifier = Modifier.height(36.dp)
+                // Balance Badge
+                Surface(
+                  modifier = Modifier
+                    .weight(1f)
+                    .height(38.dp),
+                  shape = RoundedCornerShape(8.dp),
+                  color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                  border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
                 ) {
-                  Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(16.dp))
-                    Text("كشف حساب العميل", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimary)
+                  Row(
+                    modifier = Modifier
+                      .fillMaxSize()
+                      .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                  ) {
+                    Text(
+                      text = "الرصيد: ",
+                      fontSize = 11.5.sp,
+                      fontWeight = FontWeight.Medium,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                      text = "${formatMoney(custBalance)} $currencySymbol",
+                      fontSize = 12.sp,
+                      fontWeight = FontWeight.Bold,
+                      color = if (custBalance > 0) MaterialTheme.colorScheme.primary else if (custBalance < 0) Color(0xFFDC2626) else MaterialTheme.colorScheme.onSurface,
+                      maxLines = 1
+                    )
                   }
                 }
 
-                Text(
-                  text = "رصيد الحساب: ${formatMoney(custBalance)} $currencySymbol",
-                  fontSize = 12.sp,
-                  fontWeight = FontWeight.Bold,
-                  color = MaterialTheme.colorScheme.primary
-                )
+                // Statement Button
+                Button(
+                  onClick = {
+                    selectedCustLocal?.let { cust ->
+                      viewModel.selectCustomer(cust.id)
+                      viewModel.navigateToCustomerStatement(cust)
+                      showSalesSetupDialog = false
+                      onNavigateTab("statements")
+                    }
+                  },
+                  colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                  shape = RoundedCornerShape(8.dp),
+                  contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                  modifier = Modifier.height(38.dp)
+                ) {
+                  Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                  ) {
+                    Icon(
+                      Icons.Default.ReceiptLong,
+                      contentDescription = null,
+                      tint = MaterialTheme.colorScheme.onPrimary,
+                      modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                      "كشف حساب",
+                      fontSize = 11.5.sp,
+                      fontWeight = FontWeight.Bold,
+                      color = MaterialTheme.colorScheme.onPrimary
+                    )
+                  }
+                }
+              }
+            } else if (selectedSupLocal != null) {
+              // Selected Supplier Balance and Statement Button
+              val supInvoices = allInvoicesState.filter { it.customerId == selectedSupLocal!!.id && it.isPurchase && !it.isDraft }
+              val supTx = allSupplierTransactions.filter { it.supplierId == selectedSupLocal!!.id }
+              val totalSupDebt = supInvoices.sumOf { it.total } + supTx.filter { it.transactionType == "شراء" || it.transactionType == "فاتورة" }.sumOf { it.amount }
+              val totalSupCredit = supInvoices.sumOf { it.paidAmount } + supTx.filter { it.transactionType == "سداد" || it.transactionType == "دفعة" }.sumOf { it.amount }
+              val supBalance = totalSupDebt - totalSupCredit
+
+              Row(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+              ) {
+                // Balance Badge
+                Surface(
+                  modifier = Modifier
+                    .weight(1f)
+                    .height(38.dp),
+                  shape = RoundedCornerShape(8.dp),
+                  color = Color(0xFFDCFCE7),
+                  border = BorderStroke(1.dp, Color(0xFF86EFAC))
+                ) {
+                  Row(
+                    modifier = Modifier
+                      .fillMaxSize()
+                      .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                  ) {
+                    Text(
+                      text = "رصيد المورد: ",
+                      fontSize = 11.5.sp,
+                      fontWeight = FontWeight.Medium,
+                      color = Color(0xFF15803D)
+                    )
+                    Text(
+                      text = "${formatMoney(supBalance)} $currencySymbol",
+                      fontSize = 12.sp,
+                      fontWeight = FontWeight.Bold,
+                      color = if (supBalance > 0) Color(0xFF15803D) else if (supBalance < 0) Color(0xFFDC2626) else MaterialTheme.colorScheme.onSurface,
+                      maxLines = 1
+                    )
+                  }
+                }
+
+                // Statement Button
+                Button(
+                  onClick = {
+                    selectedSupLocal?.let { sup ->
+                      viewModel.setSelectedSupplier(sup.id, sup)
+                      viewModel.navigateToSupplierStatement(sup)
+                      showSalesSetupDialog = false
+                      onNavigateTab("statements")
+                    }
+                  },
+                  colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
+                  shape = RoundedCornerShape(8.dp),
+                  contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                  modifier = Modifier.height(38.dp)
+                ) {
+                  Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                  ) {
+                    Icon(
+                      Icons.Default.ReceiptLong,
+                      contentDescription = null,
+                      tint = Color.White,
+                      modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                      "كشف حساب",
+                      fontSize = 11.5.sp,
+                      fontWeight = FontWeight.Bold,
+                      color = Color.White
+                    )
+                  }
+                }
               }
             }
-          }
+            }
 
-          Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
           // Payment Type - Responsive Segmented Buttons
           Column(
@@ -3653,11 +4833,36 @@ fun PosScreen(
           // Start Invoice Button
           Button(
             onClick = {
+              viewModel.clearCart()
+              viewModel.setDiscount(0.0)
+              viewModel.damagedCreditAccount.value = null
               if (selectedCustLocal != null) {
-                viewModel.selectCustomer(selectedCustLocal!!.id)
+                viewModel.selectCustomer(selectedCustLocal!!.id, selectedCustLocal)
+                viewModel.setManualCustomerName("")
+                viewModel.setSelectedSupplier(null)
+                viewModel.setManualSupplierName("")
+              } else if (selectedSupLocal != null) {
+                viewModel.selectCustomer(null)
+                viewModel.setManualCustomerName("")
+                viewModel.setSelectedSupplier(selectedSupLocal!!.id, selectedSupLocal)
+                viewModel.setManualSupplierName("")
+              } else if (manualNameLocal.isNotBlank()) {
+                if (manualPartyRoleLocal == "supplier") {
+                  viewModel.selectCustomer(null)
+                  viewModel.setManualCustomerName("")
+                  viewModel.setSelectedSupplier(null)
+                  viewModel.setManualSupplierName(manualNameLocal)
+                } else {
+                  viewModel.selectCustomer(null)
+                  viewModel.setManualCustomerName(manualNameLocal)
+                  viewModel.setSelectedSupplier(null)
+                  viewModel.setManualSupplierName("")
+                }
               } else {
                 viewModel.selectCustomer(null)
-                viewModel.setManualCustomerName(manualNameLocal)
+                viewModel.setManualCustomerName("")
+                viewModel.setSelectedSupplier(null)
+                viewModel.setManualSupplierName("")
               }
               viewModel.taxPercent.value = 0.0
               viewModel.setupPaymentMethod.value = paymentTypeLocal
@@ -3674,72 +4879,403 @@ fun PosScreen(
             shape = RoundedCornerShape(25.dp),
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
           ) {
-            Text(if (isSalesReturn) "البدء بمرتجع المبيعات" else "البدء بالفاتورة", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onPrimary)
+            Text(
+              text = if (isSalesReturn) "البدء بمرتجع المبيعات" else if (isDraftMode) "البدء بمسودة المبيع" else "البدء بفاتورة المبيع",
+              fontWeight = FontWeight.Bold,
+              fontSize = 16.sp,
+              color = MaterialTheme.colorScheme.onPrimary
+            )
           }
         }
       }
     }
 
-    // Customer Picker Dialog
+    // Customer & Supplier Unified Party Picker Dialog for Sales
     if (showCustPicker) {
+      val q = custSearchQuery.trim()
+
+      data class SalesPartyItem(
+        val id: Int,
+        val name: String,
+        val phone: String,
+        val isSupplier: Boolean,
+        val supplierObj: Supplier? = null,
+        val customerObj: Customer? = null
+      )
+
+      val filteredParties = remember(suppliers, customers, partyFilterTabLocal, q) {
+        val cItems = customers.map { SalesPartyItem(it.id, it.name, it.phone, isSupplier = false, customerObj = it) }
+        val sItems = suppliers.map { SalesPartyItem(it.id, it.name, it.phone, isSupplier = true, supplierObj = it) }
+        val raw = when (partyFilterTabLocal) {
+          "customers" -> cItems
+          "suppliers" -> sItems
+          else -> cItems + sItems
+        }
+        if (q.isBlank()) raw
+        else raw.filter { it.name.contains(q, ignoreCase = true) || it.phone.contains(q) }
+      }
+
       AlertDialog(
         onDismissRequest = { showCustPicker = false },
-        title = { Text("اختيار العميل", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+        title = {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+              Icon(Icons.Default.ReceiptLong, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+              Text("تحديد الطرف للمبيع (عميل أو مورد)", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            }
+            IconButton(onClick = { showCustPicker = false }) {
+              Icon(Icons.Default.Close, contentDescription = "إغلاق")
+            }
+          }
+        },
         text = {
           Column(
             modifier = Modifier
               .fillMaxWidth()
-              .heightIn(max = 350.dp),
+              .heightIn(max = 480.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
           ) {
-            OutlinedTextField(
-              value = custSearchQuery,
-              onValueChange = { custSearchQuery = it },
-              placeholder = { Text("بحث عن عميل...", fontSize = 12.sp) },
+            // Tabs Row
+            LazyRow(
               modifier = Modifier.fillMaxWidth(),
-              singleLine = true,
-              shape = RoundedCornerShape(10.dp)
-            )
-
-            val filteredList = customers.filter {
-              it.name.contains(custSearchQuery, ignoreCase = true) || it.phone.contains(custSearchQuery)
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              item {
+                FilterChip(
+                  selected = partyFilterTabLocal == "all",
+                  onClick = { partyFilterTabLocal = "all" },
+                  label = { Text("الكل (${customers.size + suppliers.size})", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                  colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                  )
+                )
+              }
+              item {
+                FilterChip(
+                  selected = partyFilterTabLocal == "customers",
+                  onClick = { partyFilterTabLocal = "customers" },
+                  label = { Text("العملاء (${customers.size})", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                  leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color(0xFF0284C7)) },
+                  colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = Color(0xFFE0F2FE),
+                    selectedLabelColor = Color(0xFF0369A1)
+                  )
+                )
+              }
+              item {
+                FilterChip(
+                  selected = partyFilterTabLocal == "suppliers",
+                  onClick = { partyFilterTabLocal = "suppliers" },
+                  label = { Text("الموردين (${suppliers.size})", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                  leadingIcon = { Icon(Icons.Default.Business, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color(0xFF16A34A)) },
+                  colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = Color(0xFFDCFCE7),
+                    selectedLabelColor = Color(0xFF15803D)
+                  )
+                )
+              }
+              item {
+                FilterChip(
+                  selected = partyFilterTabLocal == "new_party",
+                  onClick = { partyFilterTabLocal = "new_party" },
+                  label = { Text("طرف جديد", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                  leadingIcon = { Icon(Icons.Default.PersonAdd, contentDescription = null, modifier = Modifier.size(14.dp)) }
+                )
+              }
             }
 
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-              item {
-                Surface(
-                  onClick = {
-                    selectedCustLocal = null
-                    manualNameLocal = ""
-                    showCustPicker = false
-                  },
+            if (partyFilterTabLocal != "new_party") {
+              // Search input
+              OutlinedTextField(
+                value = custSearchQuery,
+                onValueChange = { custSearchQuery = it },
+                placeholder = { Text("ابحث باسم العميل أو المورد أو الهاتف...", fontSize = 12.sp) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                trailingIcon = {
+                  if (custSearchQuery.isNotBlank()) {
+                    IconButton(onClick = { custSearchQuery = "" }) {
+                      Icon(Icons.Default.Clear, contentDescription = "مسح", modifier = Modifier.size(16.dp))
+                    }
+                  }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(10.dp)
+              )
+
+              // Quick Action Cards for direct search input
+              if (q.isNotBlank()) {
+                Row(
                   modifier = Modifier.fillMaxWidth(),
-                  shape = RoundedCornerShape(8.dp),
-                  color = MaterialTheme.colorScheme.surfaceVariant
+                  horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                  Text("زبون عام (غير مسجل)", modifier = Modifier.padding(12.dp), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                  // Apply as Customer
+                  Surface(
+                    onClick = {
+                      val matchedCust = customers.find { it.name.trim().equals(q, ignoreCase = true) }
+                      if (matchedCust != null) {
+                        selectedCustLocal = matchedCust
+                        manualNameLocal = ""
+                      } else {
+                        selectedCustLocal = null
+                        manualNameLocal = q
+                        manualPartyRoleLocal = "customer"
+                      }
+                      selectedSupLocal = null
+                      showCustPicker = false
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFE0F2FE),
+                    border = BorderStroke(1.dp, Color(0xFF0284C7)),
+                    modifier = Modifier.weight(1f)
+                  ) {
+                    Row(
+                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                      Icon(Icons.Default.Person, contentDescription = null, tint = Color(0xFF0284C7), modifier = Modifier.size(16.dp))
+                      Text("تطبيق كـ عميل", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0369A1), maxLines = 1)
+                    }
+                  }
+
+                  // Apply as Supplier
+                  Surface(
+                    onClick = {
+                      val matchedSup = suppliers.find { it.name.trim().equals(q, ignoreCase = true) }
+                      if (matchedSup != null) {
+                        selectedSupLocal = matchedSup
+                        manualNameLocal = ""
+                      } else {
+                        selectedSupLocal = null
+                        manualNameLocal = q
+                        manualPartyRoleLocal = "supplier"
+                      }
+                      selectedCustLocal = null
+                      showCustPicker = false
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFDCFCE7),
+                    border = BorderStroke(1.dp, Color(0xFF16A34A)),
+                    modifier = Modifier.weight(1f)
+                  ) {
+                    Row(
+                      modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                      verticalAlignment = Alignment.CenterVertically,
+                      horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                      Icon(Icons.Default.Business, contentDescription = null, tint = Color(0xFF16A34A), modifier = Modifier.size(16.dp))
+                      Text("تطبيق كـ مورد", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF15803D), maxLines = 1)
+                    }
+                  }
                 }
               }
-              items(filteredList) { cust ->
-                Surface(
-                  onClick = {
-                    selectedCustLocal = cust
-                    manualNameLocal = ""
-                    showCustPicker = false
-                  },
-                  modifier = Modifier.fillMaxWidth(),
-                  shape = RoundedCornerShape(8.dp),
-                  color = if (selectedCustLocal?.id == cust.id) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                ) {
-                  Row(
-                    modifier = Modifier
-                      .fillMaxWidth()
-                      .padding(12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+
+              // Parties List
+              LazyColumn(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .weight(1f, fill = false)
+                  .heightIn(max = 260.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+              ) {
+                // General customer option
+                item {
+                  val isGen = (selectedSupLocal == null && selectedCustLocal == null && manualNameLocal.isBlank())
+                  Surface(
+                    onClick = {
+                      selectedSupLocal = null
+                      selectedCustLocal = null
+                      manualNameLocal = ""
+                      showCustPicker = false
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isGen) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, if (isGen) MaterialTheme.colorScheme.primary else Color.Transparent),
+                    modifier = Modifier.fillMaxWidth()
                   ) {
-                    Text(cust.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                    Text(cust.phone, fontSize = 12.sp, color = Color.Gray)
+                    Row(
+                      modifier = Modifier.padding(10.dp),
+                      horizontalArrangement = Arrangement.SpaceBetween,
+                      verticalAlignment = Alignment.CenterVertically
+                    ) {
+                      Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        RadioButton(selected = isGen, onClick = {
+                          selectedSupLocal = null
+                          selectedCustLocal = null
+                          manualNameLocal = ""
+                          showCustPicker = false
+                        })
+                        Text("زبون عام (غير مسجل - نقدي)", fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
+                      }
+                    }
+                  }
+                }
+
+                items(filteredParties) { item ->
+                  val isSelected = if (item.isSupplier) {
+                    selectedSupLocal?.id == item.id
+                  } else {
+                    selectedCustLocal?.id == item.id
+                  }
+
+                  Surface(
+                    onClick = {
+                      if (item.isSupplier) {
+                        selectedSupLocal = item.supplierObj
+                        selectedCustLocal = null
+                        manualNameLocal = ""
+                        manualPartyRoleLocal = "supplier"
+                        viewModel.showToast("تم اختيار المورد: ${item.name} للبيع له")
+                      } else {
+                        selectedCustLocal = item.customerObj
+                        selectedSupLocal = null
+                        manualNameLocal = ""
+                        manualPartyRoleLocal = "customer"
+                        viewModel.showToast("تم اختيار العميل: ${item.name}")
+                      }
+                      showCustPicker = false
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.fillMaxWidth()
+                  ) {
+                    Row(
+                      modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                      horizontalArrangement = Arrangement.SpaceBetween,
+                      verticalAlignment = Alignment.CenterVertically
+                    ) {
+                      Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f)
+                      ) {
+                        RadioButton(
+                          selected = isSelected,
+                          onClick = {
+                            if (item.isSupplier) {
+                              selectedSupLocal = item.supplierObj
+                              selectedCustLocal = null
+                              manualNameLocal = ""
+                              manualPartyRoleLocal = "supplier"
+                              viewModel.showToast("تم اختيار المورد: ${item.name} للبيع له")
+                            } else {
+                              selectedCustLocal = item.customerObj
+                              selectedSupLocal = null
+                              manualNameLocal = ""
+                              manualPartyRoleLocal = "customer"
+                              viewModel.showToast("تم اختيار العميل: ${item.name}")
+                            }
+                            showCustPicker = false
+                          }
+                        )
+                        Icon(
+                          imageVector = if (item.isSupplier) Icons.Default.Business else Icons.Default.Person,
+                          contentDescription = null,
+                          tint = if (item.isSupplier) Color(0xFF16A34A) else Color(0xFF0284C7),
+                          modifier = Modifier.size(18.dp)
+                        )
+                        Column {
+                          Text(item.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                          if (item.phone.isNotBlank()) {
+                            Text(item.phone, fontSize = 11.sp, color = Color.Gray)
+                          }
+                        }
+                      }
+
+                      // Distinction Badge
+                      if (item.isSupplier) {
+                        Surface(
+                          color = Color(0xFFDCFCE7),
+                          border = BorderStroke(1.dp, Color(0xFF86EFAC)),
+                          shape = RoundedCornerShape(5.dp)
+                        ) {
+                          Text(
+                            "مورد",
+                            color = Color(0xFF15803D),
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                          )
+                        }
+                      } else {
+                        Surface(
+                          color = Color(0xFFE0F2FE),
+                          border = BorderStroke(1.dp, Color(0xFF7DD3FC)),
+                          shape = RoundedCornerShape(5.dp)
+                        ) {
+                          Text(
+                            "عميل",
+                            color = Color(0xFF0369A1),
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                          )
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            } else {
+              // "new_party" Tab in Sales Setup
+              Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                  value = manualNameLocal,
+                  onValueChange = { manualNameLocal = it },
+                  label = { Text("اسم الطرف الجديد *", fontSize = 12.5.sp) },
+                  singleLine = true,
+                  modifier = Modifier.fillMaxWidth(),
+                  shape = RoundedCornerShape(10.dp)
+                )
+
+                Row(
+                  modifier = Modifier.fillMaxWidth(),
+                  horizontalArrangement = Arrangement.spacedBy(8.dp),
+                  verticalAlignment = Alignment.CenterVertically
+                ) {
+                  Text("نوع الطرف:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                  FilterChip(
+                    selected = manualPartyRoleLocal == "customer",
+                    onClick = { manualPartyRoleLocal = "customer" },
+                    label = { Text("عميل", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                    leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(15.dp)) },
+                    colors = FilterChipDefaults.filterChipColors(
+                      selectedContainerColor = Color(0xFFE0F2FE),
+                      selectedLabelColor = Color(0xFF0369A1)
+                    )
+                  )
+                  FilterChip(
+                    selected = manualPartyRoleLocal == "supplier",
+                    onClick = { manualPartyRoleLocal = "supplier" },
+                    label = { Text("مورد", fontSize = 11.5.sp, fontWeight = FontWeight.Bold) },
+                    leadingIcon = { Icon(Icons.Default.Business, contentDescription = null, modifier = Modifier.size(15.dp)) },
+                    colors = FilterChipDefaults.filterChipColors(
+                      selectedContainerColor = Color(0xFFDCFCE7),
+                      selectedLabelColor = Color(0xFF15803D)
+                    )
+                  )
+                }
+
+                if (manualNameLocal.trim().isNotBlank()) {
+                  Button(
+                    onClick = {
+                      selectedSupLocal = null
+                      selectedCustLocal = null
+                      showCustPicker = false
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                  ) {
+                    Text("تطبيق الطرف على الفاتورة", fontWeight = FontWeight.Bold, fontSize = 12.5.sp)
                   }
                 }
               }
@@ -3760,27 +5296,54 @@ fun PosScreen(
       val combinedTxList = remember(custInvoices, relatedCustTx) {
         val list = mutableListOf<CombinedCustomerTx>()
         custInvoices.forEach { inv ->
-          // Debit for the invoice total
-          list.add(
-            CombinedCustomerTx(
-              date = inv.invoiceDate,
-              description = "فاتورة مبيعات رقم #${inv.id}",
-              debit = inv.total,
-              credit = 0.0,
-              refId = inv.id
-            )
-          )
-          // Credit for any amount paid at the time of invoice
-          if (inv.paidAmount > 0) {
+          val isReturn = inv.total < 0 || inv.subtotal < 0
+          val absTotal = kotlin.math.abs(inv.total)
+          val absPaid = kotlin.math.abs(inv.paidAmount)
+          if (isReturn) {
+            // Return reduces customer debt (credit)
             list.add(
               CombinedCustomerTx(
-                date = inv.invoiceDate + 1000,
-                description = "دفعة مسددة على فاتورة #${inv.id}",
+                date = inv.invoiceDate,
+                description = "فاتورة مرتجع مبيعات رقم #${inv.id}",
                 debit = 0.0,
-                credit = inv.paidAmount,
+                credit = absTotal,
                 refId = inv.id
               )
             )
+            if (absPaid > 0) {
+              list.add(
+                CombinedCustomerTx(
+                  date = inv.invoiceDate + 1000,
+                  description = "سند صرف / رد نقدي لمرتجع #${inv.id}",
+                  debit = absPaid,
+                  credit = 0.0,
+                  refId = inv.id
+                )
+              )
+            }
+          } else {
+            // Debit for the invoice total
+            list.add(
+              CombinedCustomerTx(
+                date = inv.invoiceDate,
+                description = "فاتورة مبيعات رقم #${inv.id}",
+                debit = inv.total,
+                credit = 0.0,
+                refId = inv.id
+              )
+            )
+            // Credit for any amount paid at the time of invoice
+            if (inv.paidAmount > 0) {
+              list.add(
+                CombinedCustomerTx(
+                  date = inv.invoiceDate + 1000,
+                  description = "دفعة مسددة على فاتورة #${inv.id}",
+                  debit = 0.0,
+                  credit = inv.paidAmount,
+                  refId = inv.id
+                )
+              )
+            }
           }
         }
         relatedCustTx.forEach { tx ->
@@ -4164,11 +5727,12 @@ fun PosScreen(
             suppName.contains(searchQueryHistory, ignoreCase = true) ||
             inv.paymentMethod.contains(searchQueryHistory, ignoreCase = true)
 
+        val isReturn = inv.total < 0 || inv.subtotal < 0
         val isPurchase = isPurchaseInvoice(inv, supplierTxList, emptyList(), emptyList(), customers, suppliers)
         val matchesType = when (selectedFilterType) {
-          "المبيعات" -> !isPurchase && inv.total >= 0 && !inv.isDraft
-          "المشتريات" -> isPurchase && inv.total >= 0 && !inv.isDraft
-          "مرتجعات" -> inv.total < 0 && !inv.isDraft
+          "المبيعات" -> !isPurchase && !isReturn && !inv.isDraft
+          "المشتريات" -> isPurchase && !isReturn && !inv.isDraft
+          "مرتجعات" -> isReturn && !inv.isDraft
           "المسودات" -> inv.isDraft
           else -> !inv.isDraft // "الكل" shows all non-drafts
         }
@@ -4323,7 +5887,7 @@ fun PosScreen(
                   val suppName = suppliers.find { it.id == inv.customerId }?.name ?: "مورد عام"
                   val formattedDate = dateFormat.format(java.util.Date(inv.invoiceDate))
 
-                  val isReturn = inv.total < 0
+                  val isReturn = inv.total < 0 || inv.subtotal < 0
                   val isPurchase = isPurchaseInvoice(inv, supplierTxList, emptyList(), emptyList(), customers, suppliers)
                   
                   val typeLabel = when {
@@ -6870,7 +8434,14 @@ fun DashboardScreen(
           confirmButton = {
             Button(
               onClick = {
-                val amt = expenseAmtStr.toDoubleOrNull() ?: 0.0
+                val clean = expenseAmtStr.trim()
+                  .replace('٠', '0').replace('١', '1').replace('٢', '2').replace('٣', '3').replace('٤', '4')
+                  .replace('٥', '5').replace('٦', '6').replace('٧', '7').replace('٨', '8').replace('٩', '9')
+                  .replace('۰', '0').replace('۱', '1').replace('۲', '2').replace('۳', '3').replace('۴', '4')
+                  .replace('۵', '5').replace('۶', '6').replace('۷', '7').replace('۸', '8').replace('۹', '9')
+                  .replace(',', '.')
+                  .replace('،', '.')
+                val amt = clean.toDoubleOrNull() ?: 0.0
                 if (expenseDesc.trim().isEmpty() || amt <= 0.0) {
                   viewModel.showToast("يرجى إدخال تفاصيل صحيحة ومبلغ أكبر من صفر")
                 } else {
@@ -8982,9 +10553,10 @@ fun DashboardScreen(
   // ==========================================
   @Composable
   fun AccountingScreen(
-  viewModel: AppViewModel,
-  ledgerEntries: List<LedgerEntry>
-    ) {
+    viewModel: AppViewModel,
+    ledgerEntries: List<LedgerEntry>,
+    onNavigate: (String) -> Unit
+  ) {
     val balances = viewModel.calculateAccountBalances(ledgerEntries)
     val context = LocalContext.current
     var showJournalEntryDialog by remember { mutableStateOf(false) }
@@ -9089,8 +10661,8 @@ fun DashboardScreen(
           Box(modifier = Modifier.fillMaxSize()) {
             when (accountingTab) {
               "journal" -> JournalBookTab(viewModel, ledgerEntries)
-              "balances" -> TrialBalanceTab(balances)
-              "reports" -> FinancialStatementsTab(balances)
+              "balances" -> TrialBalanceTab(balances, onNavigateToExpenses = { onNavigate("expense_balances_report") })
+              "reports" -> FinancialStatementsTab(balances, onNavigateToExpenses = { onNavigate("expense_balances_report") })
             }
           }
         }
@@ -9112,7 +10684,8 @@ fun DashboardScreen(
   fun CrmScreen(
     viewModel: AppViewModel,
     customers: List<Customer>,
-    invoices: List<Invoice>
+    invoices: List<Invoice>,
+    onNavigateToStatements: (() -> Unit)? = null
   ) {
     val allInvoiceItemsState by viewModel.allInvoiceItems.collectAsState(emptyList())
     val allInvoicesState by viewModel.allInvoices.collectAsState(emptyList())
@@ -9319,7 +10892,14 @@ fun DashboardScreen(
                       ) {
                         // Statement of Account Button
                         Button(
-                          onClick = { selectedCustomerForStatement = cust },
+                          onClick = {
+                            if (onNavigateToStatements != null) {
+                              viewModel.navigateToCustomerStatement(cust)
+                              onNavigateToStatements()
+                            } else {
+                              selectedCustomerForStatement = cust
+                            }
+                          },
                           colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), contentColor = MaterialTheme.colorScheme.primary),
                           shape = RoundedCornerShape(8.dp),
                           contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
@@ -9429,7 +11009,14 @@ fun DashboardScreen(
                       ) {
                         // Statement & Supply details
                         Button(
-                          onClick = { selectedSupplierForStatement = sup },
+                          onClick = {
+                            if (onNavigateToStatements != null) {
+                              viewModel.navigateToSupplierStatement(sup)
+                              onNavigateToStatements()
+                            } else {
+                              selectedSupplierForStatement = sup
+                            }
+                          },
                           colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), contentColor = MaterialTheme.colorScheme.primary),
                           shape = RoundedCornerShape(8.dp),
                           contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
@@ -9679,27 +11266,54 @@ fun DashboardScreen(
           val list = mutableListOf<CombinedCustomerTx>()
           // Add invoices as debits (what they owe) and their cash paidAmount as immediate credits
           customerInvoices.forEach { inv ->
-            // Debit for the invoice total
-            list.add(
-              CombinedCustomerTx(
-                date = inv.invoiceDate,
-                description = "فاتورة مبيعات رقم #${inv.id}",
-                debit = inv.total,
-                credit = 0.0,
-                refId = inv.id
-              )
-            )
-            // Credit for any amount paid at the time of invoice
-            if (inv.paidAmount > 0) {
+            val isReturn = inv.total < 0 || inv.subtotal < 0
+            val absTotal = kotlin.math.abs(inv.total)
+            val absPaid = kotlin.math.abs(inv.paidAmount)
+            if (isReturn) {
+              // Return reduces customer debt (credit)
               list.add(
                 CombinedCustomerTx(
-                  date = inv.invoiceDate + 1000,
-                  description = "دفعة مسددة على فاتورة #${inv.id}",
+                  date = inv.invoiceDate,
+                  description = "فاتورة مرتجع مبيعات رقم #${inv.id}",
                   debit = 0.0,
-                  credit = inv.paidAmount,
+                  credit = absTotal,
                   refId = inv.id
                 )
               )
+              if (absPaid > 0) {
+                list.add(
+                  CombinedCustomerTx(
+                    date = inv.invoiceDate + 1000,
+                    description = "سند صرف / رد نقدي لمرتجع #${inv.id}",
+                    debit = absPaid,
+                    credit = 0.0,
+                    refId = inv.id
+                  )
+                )
+              }
+            } else {
+              // Debit for the invoice total
+              list.add(
+                CombinedCustomerTx(
+                  date = inv.invoiceDate,
+                  description = "فاتورة مبيعات رقم #${inv.id}",
+                  debit = inv.total,
+                  credit = 0.0,
+                  refId = inv.id
+                )
+              )
+              // Credit for any amount paid at the time of invoice
+              if (inv.paidAmount > 0) {
+                list.add(
+                  CombinedCustomerTx(
+                    date = inv.invoiceDate + 1000,
+                    description = "دفعة مسددة على فاتورة #${inv.id}",
+                    debit = 0.0,
+                    credit = inv.paidAmount,
+                    refId = inv.id
+                  )
+                )
+              }
             }
           }
           // Add manual transactions
@@ -9795,7 +11409,7 @@ fun DashboardScreen(
                   colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                   Column(modifier = Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("إجمالي المدفوعات (دائن)", fontSize = 10.sp, color = Color.Gray)
+                    Text("إجمالي السداد والمرتجعات (دائن)", fontSize = 10.sp, color = Color.Gray)
                     Text("${formatMoney(totalCredit)} شيكل", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = EmeraldGreen)
                   }
                 }
@@ -10615,13 +12229,6 @@ fun DashboardScreen(
           singleLine = true,
           modifier = Modifier.fillMaxWidth()
           )
-          OutlinedTextField(
-          value = storeVatNumber,
-          onValueChange = { viewModel.storeVatNumber.value = it },
-          label = { Text("الرقم الضريبي:") },
-          singleLine = true,
-          modifier = Modifier.fillMaxWidth()
-          )
           if (userAccount?.role == "ADMIN") {
             OutlinedTextField(
               value = supportWhatsappNumber,
@@ -10943,7 +12550,7 @@ fun DashboardScreen(
   )
   
   @Composable
-    fun TrialBalanceTab(balances: Map<String, Double>) {
+    fun TrialBalanceTab(balances: Map<String, Double>, onNavigateToExpenses: () -> Unit) {
       BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
       val isCompact = maxWidth < 600.dp
       
@@ -10962,17 +12569,36 @@ fun DashboardScreen(
           verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
               items(balances.toList()) { (account, balance) ->
+              val isExpense = account.contains("المصاريف")
               Card(
-              modifier = Modifier.fillMaxWidth(),
-              colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)),
-              border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+              modifier = Modifier
+                .fillMaxWidth()
+                .then(if (isExpense) Modifier.clickable { onNavigateToExpenses() } else Modifier),
+              colors = CardDefaults.cardColors(
+                containerColor = if (isExpense) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.15f)
+                                 else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+              ),
+              border = BorderStroke(
+                width = if (isExpense) 1.5.dp else 1.dp,
+                color = if (isExpense) MaterialTheme.colorScheme.error.copy(alpha = 0.4f) else MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+              )
                 ) {
                 Row(
                 modifier = Modifier.padding(12.dp).fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
                   ) {
-                  Text(account, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                  Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(account, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    if (isExpense) {
+                      Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.1f)
+                      ) {
+                        Text("عرض التفاصيل", fontSize = 10.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                      }
+                    }
+                  }
                   Text(
                   text = "${formatMoney(balance)} ",
                   fontWeight = FontWeight.Bold,
@@ -11007,13 +12633,25 @@ fun DashboardScreen(
             } else {
               LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(balances.toList()) { (account, balance) ->
+                val isExpense = account.contains("المصاريف")
                 Row(
                 modifier = Modifier
                 .fillMaxWidth()
+                .then(if (isExpense) Modifier.clickable { onNavigateToExpenses() }.background(MaterialTheme.colorScheme.error.copy(alpha = 0.05f)) else Modifier)
                 .border(0.5.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f))
                 .padding(12.dp)
                   ) {
-                  Text(account, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.weight(1.5f))
+                  Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1.5f)) {
+                    Text(account, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    if (isExpense) {
+                      Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = MaterialTheme.colorScheme.error.copy(alpha = 0.1f)
+                      ) {
+                        Text("عرض التفاصيل", fontSize = 10.sp, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                      }
+                    }
+                  }
                   Text(
                   text = "${formatMoney(balance)} ",
                   fontWeight = FontWeight.Bold,
@@ -11188,11 +12826,11 @@ fun isPurchaseInvoice(
   customers: List<com.example.data.Customer> = emptyList(),
   suppliers: List<com.example.data.Supplier> = emptyList()
 ): Boolean {
-  return suppliers.any { it.id == inv.customerId }
+  return inv.isPurchase || (inv.customerId != null && inv.customerId > 0 && suppliers.any { it.id == inv.customerId } && customers.none { it.id == inv.customerId })
 }
 
 @Composable
-fun FinancialStatementsTab(balances: Map<String, Double>) {
+fun FinancialStatementsTab(balances: Map<String, Double>, onNavigateToExpenses: () -> Unit) {
     val cash = balances["الصندوق"] ?: 0.0
     val bank = balances["البنك"] ?: 0.0
     val inventory = balances["مخزون مستودع 1"] ?: 0.0
@@ -11223,7 +12861,28 @@ fun FinancialStatementsTab(balances: Map<String, Double>) {
                 HorizontalDivider()
                 FinancialRow("إيرادات المبيعات والخدمات (النشاط):", revenue)
                 FinancialRow("تكلفة البضاعة المباعة (COGS):", -cogs)
-                FinancialRow("إجمالي المصاريف التشغيلية (Expenses):", -expenses)
+                
+                Surface(
+                    onClick = onNavigateToExpenses,
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.15f),
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f))
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FinancialRow("إجمالي المصاريف التشغيلية (Expenses):", -expenses)
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
+                        ) {
+                            Text("عرض التفاصيل", fontSize = 10.sp, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+                        }
+                    }
+                }
+
                 HorizontalDivider()
                 FinancialRow("صافي الأرباح التشغيلية:", netProfit, isTotal = true)
             }

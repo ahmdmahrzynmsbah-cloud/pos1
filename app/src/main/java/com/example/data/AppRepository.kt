@@ -202,7 +202,8 @@ class AppRepository(val dao: AppDao, private val context: android.content.Contex
         checkDate: Long? = null,
         isReturn: Boolean = false,
         isDraft: Boolean = false,
-        customInvoiceDate: Long? = null
+        customInvoiceDate: Long? = null,
+        isPartySupplier: Boolean = false
     ): Invoice {
         val sign = if (isReturn) -1.0 else 1.0
         val baseSubtotal = items.sumOf { it.product.priceSale * it.quantity }
@@ -266,11 +267,25 @@ class AppRepository(val dao: AppDao, private val context: android.content.Contex
         }
 
         if (!isDraft) {
-        // 3. Loyalty points processing (1 point per 10 Shekels spent)
-        if (customerId != null) {
-            val pointsToAdd = (total / 10.0).toInt()
-            if (pointsToAdd > 0) {
-                dao.addCustomerPoints(customerId, pointsToAdd)
+        // 3. Loyalty points processing or Supplier debt recording when selling to a supplier
+        if (customerId != null && !isDraft) {
+            if (isPartySupplier) {
+                val absTotal = kotlin.math.abs(total)
+                val supTx = SupplierTransaction(
+                    supplierId = customerId,
+                    amount = absTotal,
+                    transactionType = if (isReturn) "مرتجع_مبيعات" else "بيع",
+                    date = targetDate,
+                    note = if (isReturn) "فاتورة مرتجع مبيعات للمورد رقم #$invoiceId" else "فاتورة مبيعات بضاعة للمورد رقم #$invoiceId"
+                )
+                dao.insertSupplierTransaction(supTx)
+                val balChange = if (isReturn) absTotal else -absTotal
+                dao.updateSupplierBalance(customerId, balChange)
+            } else if (!isReturn) {
+                val pointsToAdd = (total / 10.0).toInt()
+                if (pointsToAdd > 0) {
+                    dao.addCustomerPoints(customerId, pointsToAdd)
+                }
             }
         }
 
@@ -282,23 +297,25 @@ class AppRepository(val dao: AppDao, private val context: android.content.Contex
         }
         
         // Journal entry A: Record Sales Revenue, Tax Payable, and Cash/Bank debit
+        val absDiscounted = kotlin.math.abs(discountedSubtotal)
+        val absTax = kotlin.math.abs(taxAmount)
         dao.insertLedgerEntry(
             LedgerEntry(
                 date = targetDate,
                 description = "${if (isReturn) "مرتجع مبيعات" else "مبيعات"} فاتورة رقم #$invoiceId",
-                debitAccount = mainDebitAccount,
-                creditAccount = "إيرادات المبيعات",
-                amount = discountedSubtotal
+                debitAccount = if (isReturn) "مردودات ومسموحات المبيعات" else mainDebitAccount,
+                creditAccount = if (isReturn) mainDebitAccount else "إيرادات المبيعات",
+                amount = absDiscounted
             )
         )
-        if (taxAmount > 0) {
+        if (absTax > 0) {
             dao.insertLedgerEntry(
                 LedgerEntry(
                     date = targetDate,
                     description = "ضريبة القيمة المضافة ${if (isReturn) "مرتجع مبيعات" else ""} فاتورة رقم #$invoiceId",
-                    debitAccount = mainDebitAccount,
-                    creditAccount = "ضريبة القيمة المضافة المستحقة",
-                    amount = taxAmount
+                    debitAccount = if (isReturn) "ضريبة القيمة المضافة المستحقة" else mainDebitAccount,
+                    creditAccount = if (isReturn) mainDebitAccount else "ضريبة القيمة المضافة المستحقة",
+                    amount = absTax
                 )
             )
         }
@@ -309,17 +326,20 @@ class AppRepository(val dao: AppDao, private val context: android.content.Contex
                 LedgerEntry(
                     date = targetDate,
                     description = "تكلفة بضاعة مباعة ${if (isReturn) "مرتجع" else ""} فاتورة رقم #$invoiceId",
-                    debitAccount = "تكلفة البضاعة المباعة",
-                    creditAccount = "المخزون",
+                    debitAccount = if (isReturn) "المخزون" else "تكلفة البضاعة المباعة",
+                    creditAccount = if (isReturn) "تكلفة البضاعة المباعة" else "المخزون",
                     amount = totalCostOfGoodsSold
                 )
             )
         }
 
-        // 5. Update shift sales amounts if there's an active shift
-        // We'll update the active shift salesAmount in the ViewModel or here if we have active shift flow
-        // Let's do a simple check and update in our shift management
-        logAudit(cashierName, "إتمام بيع", "تم ${if (isReturn) "إرجاع" else "بيع"} فاتورة #$invoiceId بإجمالي $total شيكل بطريقة دفع $paymentMethod")
+        // 5. Audit log
+        val absTotal = kotlin.math.abs(total)
+        logAudit(
+            cashierName,
+            if (isReturn) "مرتجع مبيعات" else "إتمام بيع",
+            "تم ${if (isReturn) "إرجاع" else "بيع"} فاتورة #$invoiceId بإجمالي $absTotal شيكل بطريقة دفع $paymentMethod"
+        )
         }
 
         return invoice.copy(id = invoiceId)
@@ -341,7 +361,8 @@ class AppRepository(val dao: AppDao, private val context: android.content.Contex
         checkDate: Long? = null,
         isReturn: Boolean = false,
         isDraft: Boolean = false,
-        customInvoiceDate: Long? = null
+        customInvoiceDate: Long? = null,
+        isPartyCustomer: Boolean = false
     ): Invoice {
         val sign = if (isReturn) -1.0 else 1.0
         val baseSubtotal = items.sumOf { item ->
@@ -405,32 +426,99 @@ class AppRepository(val dao: AppDao, private val context: android.content.Contex
         }
 
         if (!isDraft) {
-            // 3. Record Supplier Transaction
+            val absTotal = kotlin.math.abs(total)
+            // 3. Record Party Transaction (Customer or Supplier)
             if (supplierId != null) {
-                val tx = SupplierTransaction(
-                    supplierId = supplierId,
-                    amount = total,
-                    transactionType = "شراء",
-                    date = targetDate,
-                    note = "فاتورة شراء بضاعة وتوريد للمخزن رقم #$invoiceId"
-                )
-                val txId = dao.insertSupplierTransaction(tx)
-                dao.updateSupplierBalance(supplierId, total)
+                if (isPartyCustomer) {
+                    val custTx = CustomerTransaction(
+                        customerId = supplierId,
+                        amount = absTotal,
+                        transactionType = if (isReturn) "مرتجع_شراء" else "شراء",
+                        invoiceId = invoiceId,
+                        date = targetDate,
+                        note = if (isReturn) "فاتورة مرتجع مشتريات من العميل رقم #$invoiceId" else "فاتورة شراء بضاعة وتوريد للمخزن من العميل رقم #$invoiceId"
+                    )
+                    dao.insertCustomerTransaction(custTx)
+                } else {
+                    val tx = SupplierTransaction(
+                        supplierId = supplierId,
+                        amount = absTotal,
+                        transactionType = if (isReturn) "مرتجع" else "شراء",
+                        date = targetDate,
+                        note = if (isReturn) "فاتورة مرتجع مشتريات رقم #$invoiceId" else "فاتورة شراء بضاعة وتوريد للمخزن رقم #$invoiceId"
+                    )
+                    dao.insertSupplierTransaction(tx)
+                    val balChange = if (isReturn) -absTotal else total
+                    dao.updateSupplierBalance(supplierId, balChange)
+                }
             }
 
             // 4. Ledger Entry
+            val partyLabel = if (isPartyCustomer) "للعميل" else "للمورد"
+            val debitPartyAcc = if (isPartyCustomer) "ذمم العملاء" else "ذمم الموردين"
             val entry = LedgerEntry(
                 date = targetDate,
-                description = "فاتورة شراء بضاعة وتوريد للمخزن رقم #$invoiceId للمورد: $supplierName",
-                debitAccount = "المخزون",
-                creditAccount = if (paymentMethod == "نقدي") "الصندوق" else "ذمم الموردين",
-                amount = total
+                description = "${if (isReturn) "فاتورة مرتجع مشتريات" else "فاتورة شراء بضاعة وتوريد للمخزن"} رقم #$invoiceId $partyLabel: $supplierName",
+                debitAccount = if (isReturn) (if (paymentMethod == "نقدي") "الصندوق" else debitPartyAcc) else "المخزون",
+                creditAccount = if (isReturn) "المخزون" else (if (paymentMethod == "نقدي") "الصندوق" else debitPartyAcc),
+                amount = absTotal
             )
             dao.insertLedgerEntry(entry)
-            logAudit(cashierName, if (isReturn) "مرتجع شراء" else "فاتورة شراء", if (isReturn) "تم حفظ فاتورة مرتجع مشتريات #$invoiceId وخصم المنتجات من المخزن بإجمالي $total للمورد $supplierName" else "تم حفظ فاتورة شراء #$invoiceId وتوريد المنتجات للمخزن بإجمالي $total للمورد $supplierName")
+            logAudit(cashierName, if (isReturn) "مرتجع شراء" else "فاتورة شراء", if (isReturn) "تم حفظ فاتورة مرتجع مشتريات #$invoiceId وخصم المنتجات من المخزن بإجمالي $absTotal $partyLabel $supplierName" else "تم حفظ فاتورة شراء #$invoiceId وتوريد المنتجات للمخزن بإجمالي $total $partyLabel $supplierName")
         }
 
         return finalInvoice
+    }
+
+    suspend fun toggleInvoiceReturnType(invoiceId: Int, currentUser: String): Invoice? {
+        val invoice = dao.getInvoiceById(invoiceId) ?: return null
+        val currentlyReturn = invoice.total < 0 || invoice.subtotal < 0
+        val targetSign = if (currentlyReturn) 1.0 else -1.0
+        val willBeReturn = !currentlyReturn
+
+        val newSubtotal = kotlin.math.abs(invoice.subtotal) * targetSign
+        val newTaxAmount = kotlin.math.abs(invoice.taxAmount) * targetSign
+        val newTotal = kotlin.math.abs(invoice.total) * targetSign
+        val newPaidAmount = kotlin.math.abs(invoice.paidAmount) * targetSign
+
+        val updatedInvoice = invoice.copy(
+            subtotal = newSubtotal,
+            taxAmount = newTaxAmount,
+            total = newTotal,
+            paidAmount = newPaidAmount
+        )
+        dao.updateInvoice(updatedInvoice)
+
+        // Adjust items and product stock
+        val items = dao.getInvoiceItemsListForInvoice(invoiceId)
+        items.forEach { item ->
+            val signQty = if (willBeReturn) -1 else 1
+            val absQty = kotlin.math.abs(item.quantity)
+            val updatedQty = absQty * signQty
+            val updatedTotal = item.price * updatedQty
+            val updatedItem = item.copy(quantity = updatedQty, total = updatedTotal)
+            dao.insertInvoiceItem(updatedItem)
+
+            val product = dao.getProductById(item.productId)
+            if (product != null) {
+                // When switching to return: sales return adds items back to stock; purchase return removes items from stock
+                val stockDelta = if (invoice.isPurchase) -absQty else absQty
+                val newStock = if (willBeReturn) {
+                    (product.quantity + stockDelta).coerceAtLeast(0)
+                } else {
+                    (product.quantity - stockDelta).coerceAtLeast(0)
+                }
+                dao.updateProductQuantity(product.id, newStock)
+            }
+        }
+
+        val typeStr = if (willBeReturn) "مرتجع" else "عادية"
+        logAudit(
+            currentUser,
+            "تعديل تصنيف فاتورة",
+            "تم تحويل تصنيف الفاتورة #${invoiceId} إلى فاتورة $typeStr بقيمة ${kotlin.math.abs(newTotal)} شيكل"
+        )
+        return updatedInvoice
     }
 
     suspend fun updateCheckStatus(invoiceId: Int, newStatus: String, currentUser: String) {
@@ -466,9 +554,10 @@ class AppRepository(val dao: AppDao, private val context: android.content.Contex
         }
     }
 
-    suspend fun insertLedgerEntry(entry: LedgerEntry) {
-        dao.insertLedgerEntry(entry)
+    suspend fun insertLedgerEntry(entry: LedgerEntry): Long {
+        val id = dao.insertLedgerEntry(entry)
         logAudit("المحاسبة", "قيد يدوي", "تم تسجيل قيد محاسبي يدوي: ${entry.description}")
+        return id
     }
 
     // --- Shift Operations ---
@@ -588,6 +677,10 @@ class AppRepository(val dao: AppDao, private val context: android.content.Contex
 
     suspend fun updateEmployee(employee: Employee) {
         dao.updateEmployee(employee)
+    }
+
+    suspend fun updateEmployeeBalance(id: Int, balanceDelta: Double) {
+        dao.updateEmployeeBalance(id, balanceDelta)
     }
 
     // --- Expenses ---

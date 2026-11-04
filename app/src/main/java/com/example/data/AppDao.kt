@@ -144,7 +144,7 @@ interface AppDao {
     fun getAllLedgerEntries(): Flow<List<LedgerEntry>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertLedgerEntry(entry: LedgerEntry)
+    suspend fun insertLedgerEntry(entry: LedgerEntry): Long
 
     @Delete
     suspend fun deleteLedgerEntry(entry: LedgerEntry)

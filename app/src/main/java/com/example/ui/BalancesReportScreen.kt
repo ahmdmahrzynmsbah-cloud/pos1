@@ -46,7 +46,8 @@ private fun formatMoneyLocal(amount: Double): String {
 @Composable
 fun BalancesReportScreen(
   viewModel: AppViewModel,
-  onBackClick: (() -> Unit)? = null
+  onBackClick: (() -> Unit)? = null,
+  onNavigateToStatements: (() -> Unit)? = null
 ) {
   val context = LocalContext.current
 
@@ -86,8 +87,17 @@ fun BalancesReportScreen(
       val custInvoices = invoices.filter { it.customerId == cust.id && !it.isPurchase && !it.isDraft }
       val custTxs = customerTransactions.filter { it.customerId == cust.id }
       
-      val totalDebit = custInvoices.sumOf { it.total } + custTxs.filter { it.transactionType in listOf("بيع", "مدين") }.sumOf { it.amount }
-      val totalCredit = custInvoices.sumOf { it.paidAmount } + custTxs.filter { it.transactionType in listOf("سداد", "دفعة", "تحصيل", "إيداع", "دائن") }.sumOf { it.amount }
+      val salesInvoices = custInvoices.filter { it.total >= 0 && it.subtotal >= 0 }
+      val returnInvoices = custInvoices.filter { it.total < 0 || it.subtotal < 0 }
+
+      val totalDebit = salesInvoices.sumOf { it.total } + 
+                       returnInvoices.sumOf { kotlin.math.abs(it.paidAmount) } + 
+                       custTxs.filter { it.transactionType in listOf("بيع", "صرف", "مدين") }.sumOf { it.amount }
+
+      val totalCredit = salesInvoices.sumOf { it.paidAmount } + 
+                        returnInvoices.sumOf { kotlin.math.abs(it.total) } + 
+                        custTxs.filter { it.transactionType in listOf("سداد", "دفعة", "تحصيل", "إيداع", "دائن") }.sumOf { it.amount }
+
       val balance = totalDebit - totalCredit // positive = customer owes us (مدين), negative = customer overpaid (دائن)
 
       val statusText = when {
@@ -112,7 +122,7 @@ fun BalancesReportScreen(
     suppliers.map { sup ->
       val supTxs = supplierTransactions.filter { it.supplierId == sup.id }
       val totalPurchases = supTxs.filter { it.transactionType in listOf("شراء", "توريد", "دائن") }.sumOf { it.amount }
-      val totalPayments = supTxs.filter { it.transactionType in listOf("دفعة", "سداد", "مدين") }.sumOf { it.amount }
+      val totalPayments = supTxs.filter { it.transactionType in listOf("دفعة", "سداد", "مدين", "مرتجع", "مرتجع شراء") }.sumOf { it.amount }
       val balance = totalPurchases - totalPayments // positive = we owe supplier (دائن), negative = supplier owes us (مدين)
 
       val statusText = when {
@@ -710,13 +720,25 @@ fun BalancesReportScreen(
                   horizontalArrangement = Arrangement.spacedBy(4.dp),
                   verticalAlignment = Alignment.CenterVertically
                 ) {
-                  // Detailed Statement Dialog Button
+                  // Detailed Statement Button
                   Button(
                     onClick = {
                       if (activeSubTab == "customers") {
-                        selectedCustomerForStatement = customers.find { it.id == item.id }
+                        val cust = customers.find { it.id == item.id }
+                        if (cust != null && onNavigateToStatements != null) {
+                          viewModel.navigateToCustomerStatement(cust)
+                          onNavigateToStatements()
+                        } else {
+                          selectedCustomerForStatement = cust
+                        }
                       } else {
-                        selectedSupplierForStatement = suppliers.find { it.id == item.id }
+                        val sup = suppliers.find { it.id == item.id }
+                        if (sup != null && onNavigateToStatements != null) {
+                          viewModel.navigateToSupplierStatement(sup)
+                          onNavigateToStatements()
+                        } else {
+                          selectedSupplierForStatement = sup
+                        }
                       }
                     },
                     colors = ButtonDefaults.buttonColors(

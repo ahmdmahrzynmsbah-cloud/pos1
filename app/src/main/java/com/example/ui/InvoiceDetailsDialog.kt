@@ -34,6 +34,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PublishedWithChanges
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Print
@@ -76,6 +77,8 @@ fun InvoiceDetailsDialog(
   viewModel: AppViewModel,
   onDismiss: () -> Unit
 ) {
+  var activeInv by remember(inv) { mutableStateOf(inv) }
+  val inv = activeInv
   val context = LocalContext.current
   val coroutineScope = rememberCoroutineScope()
   val invoiceItems by viewModel.getInvoiceItemsForInvoice(inv.id).collectAsState(emptyList())
@@ -258,7 +261,7 @@ fun InvoiceDetailsDialog(
                 shareOrViewPdf(context, pdfFile)
               },
               modifier = Modifier
-                .weight(1.2f)
+                .weight(1f)
                 .height(46.dp),
               colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
               shape = RoundedCornerShape(12.dp),
@@ -271,14 +274,58 @@ fun InvoiceDetailsDialog(
                 Icon(
                   imageVector = Icons.Default.Share,
                   contentDescription = null,
-                  modifier = Modifier.size(18.dp),
+                  modifier = Modifier.size(16.dp),
                   tint = Color.White
                 )
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(4.dp))
                 Text(
-                  text = "مشاركة PDF",
+                  text = "مشاركة",
                   fontWeight = FontWeight.Bold,
-                  fontSize = 13.sp,
+                  fontSize = 12.sp,
+                  color = Color.White,
+                  maxLines = 1
+                )
+              }
+            }
+
+            // WhatsApp Direct Share Button
+            val customerObj = customers.find { it.id == inv.customerId }
+            val custPhone = customerObj?.phone ?: ""
+            Button(
+              onClick = {
+                val isReturn = inv.total < 0 || inv.subtotal < 0
+                val title = if (isReturn) "فاتورة مرتجع #${inv.id}" else "فاتورة #${inv.id}"
+                PdfGenerator.shareInvoicePdfToWhatsApp(
+                  context = context,
+                  pdfFile = pdfFile,
+                  phoneNumber = custPhone,
+                  messageText = "مرحباً $custName، مرفق $title من $storeName بصيغة PDF. شكراً لتسوقكم معنا.",
+                  onSuccess = { msg -> Toast.makeText(context, msg, Toast.LENGTH_SHORT).show() },
+                  onError = { err -> Toast.makeText(context, err, Toast.LENGTH_SHORT).show() }
+                )
+              },
+              modifier = Modifier
+                .weight(1f)
+                .height(46.dp),
+              colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366)),
+              shape = RoundedCornerShape(12.dp),
+              contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp)
+            ) {
+              Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+              ) {
+                Icon(
+                  imageVector = Icons.Default.Share,
+                  contentDescription = null,
+                  modifier = Modifier.size(16.dp),
+                  tint = Color.White
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                  text = "واتساب",
+                  fontWeight = FontWeight.Bold,
+                  fontSize = 12.sp,
                   color = Color.White,
                   maxLines = 1
                 )
@@ -370,11 +417,18 @@ fun InvoiceDetailsDialog(
                 )
               }
             }
+            val isReturn = inv.total < 0 || inv.subtotal < 0
+            val invoiceTypeTitle = when {
+              isReturn && inv.isPurchase -> "فاتورة مرتجع مشتريات #${inv.id}"
+              isReturn -> "فاتورة مرتجع مبيعات #${inv.id}"
+              inv.isPurchase -> "فاتورة مشتريات #${inv.id}"
+              else -> "فاتورة مبيعات #${inv.id}"
+            }
             Text(
-              text = "تفاصيل فاتورة #${inv.id}",
+              text = "تفاصيل $invoiceTypeTitle",
               fontWeight = FontWeight.Bold,
               fontSize = 17.sp,
-              color = Color(0xFF0F172A)
+              color = if (isReturn) Color(0xFFDC2626) else Color(0xFF0F172A)
             )
           }
 
@@ -436,9 +490,16 @@ fun InvoiceDetailsDialog(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
               ) {
+                val isReturn = inv.total < 0 || inv.subtotal < 0
+                val headerLabel = when {
+                  isReturn && inv.isPurchase -> "مرتجع مشتريات: #${inv.id}"
+                  isReturn -> "مرتجع مبيعات: #${inv.id}"
+                  inv.isPurchase -> "فاتورة شراء: #${inv.id}"
+                  else -> "رقم الفاتورة: #${inv.id}"
+                }
                 Text(
-                  text = "رقم الفاتورة: #${inv.id}",
-                  color = Color.Black,
+                  text = headerLabel,
+                  color = if (isReturn) Color(0xFFDC2626) else Color.Black,
                   fontSize = 12.sp,
                   fontWeight = FontWeight.Bold
                 )
@@ -778,6 +839,40 @@ fun InvoiceDetailsDialog(
             }
           }
 
+          // Toggle Return / Sale Conversion Button
+          val isCurrentReturn = inv.total < 0 || inv.subtotal < 0
+          Button(
+            onClick = {
+              viewModel.toggleInvoiceReturnType(inv.id) { updated ->
+                if (updated != null) {
+                  activeInv = updated
+                }
+              }
+            },
+            modifier = Modifier
+              .fillMaxWidth()
+              .height(44.dp),
+            colors = ButtonDefaults.buttonColors(
+              containerColor = if (isCurrentReturn) Color(0xFF0D9488) else Color(0xFFDC2626)
+            ),
+            shape = RoundedCornerShape(10.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp)
+          ) {
+            Icon(
+              imageVector = Icons.Default.PublishedWithChanges,
+              contentDescription = null,
+              tint = Color.White,
+              modifier = Modifier.size(17.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+              text = if (isCurrentReturn) "تحويل الفاتورة إلى بيع عادي" else "تصحيح الفاتورة وتحويلها إلى مرتجع",
+              fontSize = 13.sp,
+              fontWeight = FontWeight.Bold,
+              color = Color.White
+            )
+          }
+
           // Full-width Close Button (خروج / إغلاق النافذة)
           Button(
             onClick = onDismiss,
@@ -929,7 +1024,14 @@ suspend fun createInvoicePdfFile(
     }
 
     canvas.drawText(storeName, pageW / 2f, 46f, titlePaint)
-    canvas.drawText("فاتورة مبيعات ضريبية  •  $branch", pageW / 2f, 66f, subHeaderPaint)
+    val isReturnPdf = inv.total < 0 || inv.subtotal < 0
+    val pdfHeaderType = when {
+      isReturnPdf && inv.isPurchase -> "فاتورة مرتجع مشتريات"
+      isReturnPdf -> "فاتورة مرتجع مبيعات ضريبية"
+      inv.isPurchase -> "فاتورة مشتريات وتوريد"
+      else -> "فاتورة مبيعات ضريبية"
+    }
+    canvas.drawText("$pdfHeaderType  •  $branch", pageW / 2f, 66f, subHeaderPaint)
 
     var y = 98f
 

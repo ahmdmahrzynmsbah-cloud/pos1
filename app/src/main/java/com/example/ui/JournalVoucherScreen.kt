@@ -417,12 +417,14 @@ fun CreateJournalVoucherDialog(
   // 2. Description
   var description by remember { mutableStateOf("") }
 
-  // 3. Debit & Credit Accounts
-  var debitAcc by remember { mutableStateOf("عميل نقدي افتراضي") }
+  // 3. Debit & Credit Accounts - defaulted for initial "سند صرف"
+  var debitAcc by remember { mutableStateOf("المصاريف العامة") }
   var creditAcc by remember { mutableStateOf("الصندوق") }
 
   // 4. Amount
   var amount by remember { mutableStateOf("") }
+
+  var isSubmitting by remember { mutableStateOf(false) }
 
   // Account Picker Sub-Dialog for either debit or credit side
   var pickerSide by remember { mutableStateOf<String?>(null) } // "debit" or "credit"
@@ -520,7 +522,7 @@ fun CreateJournalVoucherDialog(
               modifier = Modifier.fillMaxWidth(),
               horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-              val voucherTypes = listOf("سند صرف", "سند قبض", "سند قيد محاسبي")
+              val voucherTypes = listOf("سند صرف", "سند قبض", "قيد تسوية (من إلى)")
               voucherTypes.forEach { type ->
                 val isSelected = voucherType == type
                 Surface(
@@ -533,11 +535,11 @@ fun CreateJournalVoucherDialog(
                       }
                       "سند قبض" -> {
                         debitAcc = "الصندوق"
-                        creditAcc = customers.firstOrNull()?.name ?: "عميل نقدي افتراضي"
+                        creditAcc = customers.firstOrNull { !it.name.contains("افتراضي") }?.name ?: "العميل"
                       }
-                      "سند قيد محاسبي" -> {
-                        debitAcc = "عميل نقدي افتراضي"
-                        creditAcc = "الصندوق"
+                      "قيد تسوية (من إلى)" -> {
+                        debitAcc = "الحساب المدين"
+                        creditAcc = "الحساب الدائن"
                       }
                     }
                   },
@@ -656,10 +658,80 @@ fun CreateJournalVoucherDialog(
           )
         }
 
+        fun cleanAmount(input: String): Double {
+          val clean = input.trim()
+            .replace('٠', '0')
+            .replace('١', '1')
+            .replace('٢', '2')
+            .replace('٣', '3')
+            .replace('٤', '4')
+            .replace('٥', '5')
+            .replace('٦', '6')
+            .replace('٧', '7')
+            .replace('٨', '8')
+            .replace('٩', '9')
+            .replace('۰', '0')
+            .replace('۱', '1')
+            .replace('۲', '2')
+            .replace('۳', '3')
+            .replace('۴', '4')
+            .replace('۵', '5')
+            .replace('۶', '6')
+            .replace('۷', '7')
+            .replace('۸', '8')
+            .replace('۹', '9')
+            .replace(',', '.')
+            .replace('،', '.')
+          return clean.toDoubleOrNull() ?: 0.0
+        }
+
+        var submittingWithPrint by remember { mutableStateOf(false) }
+
+        fun handlePost(withPrint: Boolean) {
+          if (isSubmitting) return
+          val amt = cleanAmount(amount)
+          if (amt <= 0.0) {
+            viewModel.showToast("خطأ: يرجى إدخال مبلغ صحيح أكبر من الصفر!")
+            return
+          }
+
+          if (debitAcc.trim().equals(creditAcc.trim(), ignoreCase = true)) {
+            viewModel.showToast("خطأ: لا يمكن أن يكون الجانب المدين هو نفسه الجانب الدائن!")
+            return
+          }
+
+          val finalDesc = if (description.isNotBlank()) {
+            "من $debitAcc إلى $creditAcc: ${description.trim()}"
+          } else {
+            "من $debitAcc إلى $creditAcc"
+          }
+
+          isSubmitting = true
+          submittingWithPrint = withPrint
+          viewModel.addManualLedgerEntry(
+            description = finalDesc,
+            debitAccount = debitAcc,
+            creditAccount = creditAcc,
+            amount = amt,
+            onSuccess = { newEntry ->
+              if (withPrint) {
+                val printType = if (voucherType == "قيد تسوية (من إلى)") "قيد تسوية: من ($debitAcc) إلى ($creditAcc)" else voucherType
+                viewModel.exportJournalVoucherToPdf(context, newEntry, printType)
+              }
+              isSubmitting = false
+              onDismiss()
+            },
+            onError = { err ->
+              isSubmitting = false
+              viewModel.showToast("خطأ: $err")
+            }
+          )
+        }
+
         // --- Section 6: Action Buttons at Bottom ---
         Column(
           modifier = Modifier.fillMaxWidth(),
-          verticalArrangement = Arrangement.spacedBy(6.dp)
+          verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
           Row(
             modifier = Modifier.fillMaxWidth(),
@@ -668,42 +740,58 @@ fun CreateJournalVoucherDialog(
           ) {
             // Button 1: ترحيل وطباعة السند (Green)
             Button(
-              onClick = {
-                val amt = amount.toDoubleOrNull() ?: 0.0
-                if (amt > 0 && description.isNotBlank()) {
-                  viewModel.addManualLedgerEntry(description, debitAcc, creditAcc, amt) { newEntry ->
-                    viewModel.exportJournalVoucherToPdf(context, newEntry, voucherType)
-                  }
-                  onDismiss()
-                } else {
-                  viewModel.showToast("خطأ: يرجى كتابة بيان القيد وإدخال مبلغ صحيح!")
-                }
-              },
-              colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A)),
+              onClick = { handlePost(withPrint = true) },
+              enabled = !isSubmitting,
+              colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF16A34A),
+                disabledContainerColor = Color(0xFF16A34A).copy(alpha = 0.6f)
+              ),
               shape = RoundedCornerShape(12.dp),
-              modifier = Modifier.weight(1.3f)
+              modifier = Modifier
+                .weight(1.3f)
+                .height(48.dp)
             ) {
-              Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
-              Spacer(modifier = Modifier.width(6.dp))
-              Text("ترحيل وطباعة السند", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+              if (isSubmitting && submittingWithPrint) {
+                CircularProgressIndicator(
+                  modifier = Modifier.size(18.dp),
+                  color = Color.White,
+                  strokeWidth = 2.dp
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("جاري الترحيل...", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+              } else {
+                Icon(Icons.Default.Print, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color.White)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("ترحيل وطباعة السند", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+              }
             }
 
-            // Button 2: ترحيل فقط (Blue)
+            // Button 2: حفظ وترحيل فقط (Blue)
             Button(
-              onClick = {
-                val amt = amount.toDoubleOrNull() ?: 0.0
-                if (amt > 0 && description.isNotBlank()) {
-                  viewModel.addManualLedgerEntry(description, debitAcc, creditAcc, amt)
-                  onDismiss()
-                } else {
-                  viewModel.showToast("خطأ: يرجى كتابة بيان القيد وإدخال مبلغ صحيح!")
-                }
-              },
-              colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+              onClick = { handlePost(withPrint = false) },
+              enabled = !isSubmitting,
+              colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF2563EB),
+                disabledContainerColor = Color(0xFF2563EB).copy(alpha = 0.6f)
+              ),
               shape = RoundedCornerShape(12.dp),
-              modifier = Modifier.weight(1f)
+              modifier = Modifier
+                .weight(1.1f)
+                .height(48.dp)
             ) {
-              Text("ترحيل فقط", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+              if (isSubmitting && !submittingWithPrint) {
+                CircularProgressIndicator(
+                  modifier = Modifier.size(18.dp),
+                  color = Color.White,
+                  strokeWidth = 2.dp
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("جاري الحفظ...", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+              } else {
+                Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color.White)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("حفظ وترحيل فقط", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+              }
             }
           }
 

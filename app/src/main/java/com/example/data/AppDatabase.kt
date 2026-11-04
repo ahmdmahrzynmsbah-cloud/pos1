@@ -208,15 +208,6 @@ abstract class AppDatabase : RoomDatabase() {
                         storeName = "مؤسسة الكنز للمحاسبة التجارية"
                     ))
                 }
-
-                dao.insertCustomer(Customer(
-                    id = 1,
-                    name = "عميل نقدي افتراضي",
-                    phone = "0590000000",
-                    email = "customer@smartpos.com",
-                    points = 10,
-                    type = "عادي"
-                ))
             } catch (e: Exception) {
                 android.util.Log.e("DatabaseSeed", "Error seeding data", e)
             }

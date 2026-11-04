@@ -1,5 +1,6 @@
 package com.example.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -34,10 +35,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.shape.CircleShape
 import com.example.data.Customer
 import com.example.data.CustomerTransaction
 import com.example.data.Supplier
 import com.example.data.SupplierTransaction
+import com.example.data.Employee
 import com.example.ui.theme.EmeraldGreen
 import com.example.ui.theme.CoralError
 import com.example.ui.theme.AmberAlert
@@ -47,7 +50,10 @@ import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AccountStatementsScreen(viewModel: AppViewModel) {
+fun AccountStatementsScreen(
+  viewModel: AppViewModel,
+  onBackClick: (() -> Unit)? = null
+) {
   val context = androidx.compose.ui.platform.LocalContext.current
   var activeSubTab by remember { mutableStateOf("customers") } // "customers" or "suppliers"
   var searchQuery by remember { mutableStateOf("") }
@@ -55,10 +61,54 @@ fun AccountStatementsScreen(viewModel: AppViewModel) {
   // Selection states
   var selectedCustomer by remember { mutableStateOf<Customer?>(null) }
   var selectedSupplier by remember { mutableStateOf<Supplier?>(null) }
+  var selectedEmployee by remember { mutableStateOf<Employee?>(null) }
+
+  val targetCustomer by viewModel.targetStatementCustomer.collectAsState()
+  val targetSupplier by viewModel.targetStatementSupplier.collectAsState()
+
+  LaunchedEffect(targetCustomer) {
+    targetCustomer?.let {
+      selectedCustomer = it
+      selectedSupplier = null
+      selectedEmployee = null
+      activeSubTab = "customers"
+    }
+  }
+
+  LaunchedEffect(targetSupplier) {
+    targetSupplier?.let {
+      selectedSupplier = it
+      selectedCustomer = null
+      selectedEmployee = null
+      activeSubTab = "suppliers"
+    }
+  }
+
+  val handleBack: () -> Unit = {
+    if (selectedCustomer != null || selectedSupplier != null || selectedEmployee != null) {
+      val hadTarget = viewModel.targetStatementCustomer.value != null || viewModel.targetStatementSupplier.value != null
+      selectedCustomer = null
+      selectedSupplier = null
+      selectedEmployee = null
+      viewModel.clearStatementTargets()
+      if (hadTarget && onBackClick != null) {
+        onBackClick()
+      }
+    } else {
+      onBackClick?.invoke()
+    }
+  }
+
+  BackHandler(enabled = selectedCustomer != null || selectedSupplier != null || selectedEmployee != null || onBackClick != null) {
+    handleBack()
+  }
   
   // Data flows from ViewModel
   val customers by viewModel.allCustomers.collectAsState(emptyList())
   val suppliers by viewModel.allSuppliers.collectAsState(emptyList())
+  val employees by viewModel.allEmployees.collectAsState(emptyList())
+  val expenses by viewModel.allExpenses.collectAsState(emptyList())
+  val ledgerEntries by viewModel.allLedgerEntries.collectAsState(emptyList())
   val invoices by viewModel.allInvoices.collectAsState(emptyList())
   val customerTransactions by viewModel.allCustomerTransactions.collectAsState(emptyList())
   val supplierTransactions by viewModel.allSupplierTransactions.collectAsState(emptyList())
@@ -98,14 +148,25 @@ fun AccountStatementsScreen(viewModel: AppViewModel) {
                 
                 val combinedList = mutableListOf<StatementRow>()
                 relatedInvoices.forEach { inv ->
-                  var desc = "فاتورة مبيعات رقم #${inv.id}"
+                  val isReturn = inv.total < 0 || inv.subtotal < 0
+                  var desc = if (isReturn) "فاتورة مرتجع مبيعات رقم #${inv.id}" else "فاتورة مبيعات رقم #${inv.id}"
                   if (isDetailed) {
                       val items = allInvoiceItemsState.filter { it.invoiceId == inv.id }
                       if (items.isNotEmpty()) {
-                          desc += "\n" + items.joinToString("\n") { "- ${it.productNameAr} (${it.quantity} x ${formatLocalMoney(it.price)})" }
+                          desc += "\n" + items.joinToString("\n") { "- ${it.productNameAr} (${kotlin.math.abs(it.quantity)} x ${formatLocalMoney(it.price)})" }
                       }
                   }
-                  combinedList.add(StatementRow(inv.invoiceDate, desc, inv.total, inv.paidAmount, inv.dueDate))
+                  val absTotal = kotlin.math.abs(inv.total)
+                  val absPaid = kotlin.math.abs(inv.paidAmount)
+                  if (isReturn) {
+                      // Return credit reduces customer debt
+                      combinedList.add(StatementRow(inv.invoiceDate, desc, 0.0, absTotal, inv.dueDate))
+                      if (absPaid > 0) {
+                          combinedList.add(StatementRow(inv.invoiceDate + 1000, "سند صرف / رد نقدي لمرتجع #${inv.id}", absPaid, 0.0, inv.dueDate))
+                      }
+                  } else {
+                      combinedList.add(StatementRow(inv.invoiceDate, desc, inv.total, inv.paidAmount, inv.dueDate))
+                  }
                 }
                 relatedTxs.forEach { tx ->
                   combinedList.add(StatementRow(tx.date, tx.note.ifEmpty { if (tx.transactionType == "بيع") "فاتورة آجلة" else "سند قبض مسدد" }, if (tx.transactionType == "بيع") tx.amount else 0.0, if (tx.transactionType == "دفعة") tx.amount else 0.0, tx.dueDate))
@@ -126,7 +187,7 @@ fun AccountStatementsScreen(viewModel: AppViewModel) {
                 val combinedList = relatedTxs.sortedBy { it.date }.map { tx ->
                   StatementRow(
                     date = tx.date,
-                    description = tx.note.ifEmpty { if (tx.transactionType == "شراء") "فاتورة توريد بضاعة" else "سند صرف دفعة مالية" },
+                    description = tx.note.ifEmpty { if (tx.transactionType == "شراء") "فاتورة توريد بضاعة" else if (tx.transactionType in listOf("مرتجع", "مرتجع شراء")) "فاتورة مرتجع مشتريات" else "سند صرف دفعة مالية" },
                     debit = if (tx.transactionType != "شراء") tx.amount else 0.0,
                     credit = if (tx.transactionType == "شراء") tx.amount else 0.0
                   )
@@ -154,11 +215,8 @@ fun AccountStatementsScreen(viewModel: AppViewModel) {
         )
       },
       navigationIcon = {
-        if (selectedCustomer != null || selectedSupplier != null) {
-          IconButton(onClick = {
-            selectedCustomer = null
-            selectedSupplier = null
-          }) {
+        if (selectedCustomer != null || selectedSupplier != null || selectedEmployee != null || onBackClick != null) {
+          IconButton(onClick = handleBack) {
             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "رجوع")
           }
         }
@@ -227,6 +285,15 @@ fun AccountStatementsScreen(viewModel: AppViewModel) {
           }
         )
         TabButton(
+          text = "كشوف الموظفين ",
+          selected = activeSubTab == "employees",
+          modifier = Modifier.weight(1f),
+          onClick = {
+            activeSubTab = "employees"
+            searchQuery = ""
+          }
+        )
+        TabButton(
           text = "كشوف الموردين ",
           selected = activeSubTab == "suppliers",
           modifier = Modifier.weight(1f),
@@ -247,7 +314,7 @@ fun AccountStatementsScreen(viewModel: AppViewModel) {
       }
 
       if (activeSubTab != "overdue_alerts") {
-        // Search Bar for Customers and Suppliers
+        // Search Bar for Customers, Suppliers, and Employees
         OutlinedTextField(
           value = searchQuery,
           onValueChange = { searchQuery = it },
@@ -257,8 +324,12 @@ fun AccountStatementsScreen(viewModel: AppViewModel) {
             .testTag("statement_search_query"),
           placeholder = {
             Text(
-              if (activeSubTab == "customers") "ابحث عن عميل بالاسم أو رقم الجوال..."
-              else "ابحث عن مورد بالاسم، الشركة أو الجوال..."
+              when (activeSubTab) {
+                "customers" -> "ابحث عن عميل بالاسم أو رقم الجوال..."
+                "suppliers" -> "ابحث عن مورد بالاسم، الشركة أو الجوال..."
+                "employees" -> "ابحث عن موظف بالاسم، المسمى الوظيفي أو الجوال..."
+                else -> "بحث في السجلات..."
+              }
             )
           },
           leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
@@ -359,7 +430,7 @@ fun AccountStatementsScreen(viewModel: AppViewModel) {
             }
           }
         }
-      } else {
+      } else if (activeSubTab == "suppliers") {
         val filteredSuppliers = suppliers.filter {
           it.name.contains(searchQuery, ignoreCase = true) ||
           it.companyName.contains(searchQuery, ignoreCase = true) ||
@@ -434,6 +505,125 @@ fun AccountStatementsScreen(viewModel: AppViewModel) {
             }
           }
         }
+      } else if (activeSubTab == "employees") {
+        val filteredEmployees = employees.filter {
+          it.name.contains(searchQuery, ignoreCase = true) ||
+          it.role.contains(searchQuery, ignoreCase = true) ||
+          it.phone.contains(searchQuery)
+        }
+
+        if (filteredEmployees.isEmpty()) {
+          Box(
+            modifier = Modifier
+              .fillMaxSize()
+              .weight(1f),
+            contentAlignment = Alignment.Center
+          ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+              Icon(Icons.Default.Badge, contentDescription = null, modifier = Modifier.size(48.dp), tint = Color.Gray)
+              Text("لا يوجد موظفين مسجلين يطابقون البحث حالياً.", color = Color.Gray, fontSize = 13.sp)
+            }
+          }
+        } else {
+          LazyColumn(
+            modifier = Modifier
+              .fillMaxSize()
+              .weight(1f),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+          ) {
+            items(filteredEmployees) { emp ->
+              val empName = emp.name.trim()
+              val empExpenses = expenses.filter { 
+                it.employeeId == emp.id || 
+                (it.partyType == "موظف" && it.partyName?.trim()?.equals(empName, ignoreCase = true) == true) ||
+                it.type.contains(empName) ||
+                it.notes.contains(empName)
+              }
+              val empLedgers = ledgerEntries.filter { entry ->
+                entry.employeeId == emp.id ||
+                entry.debitAccount.trim().equals(empName, ignoreCase = true) ||
+                entry.creditAccount.trim().equals(empName, ignoreCase = true) ||
+                entry.debitAccount.contains(empName) ||
+                entry.creditAccount.contains(empName) ||
+                (entry.employeeId == null && entry.description.contains(empName))
+              }
+              val totalDebit = empExpenses.sumOf { it.amount } + empLedgers.filter { entry ->
+                val isDuplicate = empExpenses.any { exp -> kotlin.math.abs(exp.amount - entry.amount) < 0.01 && kotlin.math.abs(exp.date - entry.date) < 15000 }
+                val isDebit = entry.debitAccount.contains(empName) || entry.debitAccount.trim().equals(empName, ignoreCase = true) || (entry.employeeId == emp.id && !entry.creditAccount.contains(empName))
+                !isDuplicate && isDebit
+              }.sumOf { it.amount }
+              val totalCredit = empLedgers.filter { entry ->
+                val isDuplicate = empExpenses.any { exp -> kotlin.math.abs(exp.amount - entry.amount) < 0.01 && kotlin.math.abs(exp.date - entry.date) < 15000 }
+                val isDebit = entry.debitAccount.contains(empName) || entry.debitAccount.trim().equals(empName, ignoreCase = true) || (entry.employeeId == emp.id && !entry.creditAccount.contains(empName))
+                !isDuplicate && !isDebit
+              }.sumOf { it.amount }
+              val netBalance = emp.salary + totalCredit - totalDebit
+
+              Card(
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .clickable { selectedEmployee = emp }
+                  .testTag("statement_employee_card_${emp.id}"),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+              ) {
+                Row(
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                  verticalAlignment = Alignment.CenterVertically,
+                  horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                  Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Box(
+                      modifier = Modifier.size(40.dp).background(Color(0xFF8B5CF6).copy(alpha = 0.12f), CircleShape),
+                      contentAlignment = Alignment.Center
+                    ) {
+                      Icon(Icons.Default.Badge, contentDescription = null, tint = Color(0xFF8B5CF6), modifier = Modifier.size(22.dp))
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                      Text(emp.name, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                      Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                      ) {
+                        Text(emp.role.ifEmpty { "موظف" }, fontSize = 12.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                        Text("•", fontSize = 12.sp, color = Color.Gray)
+                        Text(if (emp.phone.isNotBlank()) "جوال: ${emp.phone}" else "بدون جوال", fontSize = 11.sp, color = Color.Gray)
+                      }
+                      Text("الراتب الأساسي: ${emp.salary} ر.س", fontSize = 11.sp, color = Color.Gray)
+                    }
+                  }
+
+                  Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("صافي المستحق", fontSize = 10.sp, color = Color.Gray)
+                    Text(
+                      text = "$netBalance ر.س",
+                      fontWeight = FontWeight.Bold,
+                      fontSize = 14.sp,
+                      color = if (netBalance >= 0) Color(0xFF16A34A) else Color(0xFFDC2626)
+                    )
+                    Surface(
+                      color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                      shape = RoundedCornerShape(6.dp)
+                    ) {
+                      Text(
+                        text = "عرض الكشف",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                      )
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     } else {
       // Detailed Statement is open!
@@ -452,6 +642,16 @@ fun AccountStatementsScreen(viewModel: AppViewModel) {
         )
       }
     }
+  }
+
+  if (selectedEmployee != null) {
+    EmployeeStatementDialog(
+      employee = selectedEmployee!!,
+      expenses = expenses,
+      ledgerEntries = ledgerEntries,
+      viewModel = viewModel,
+      onDismiss = { selectedEmployee = null }
+    )
   }
 
   // PDF / Print Simulation Dialog
@@ -622,42 +822,103 @@ fun CustomerStatementDetail(
   customerTransactions: List<CustomerTransaction>,
   viewModel: AppViewModel
 ) {
-  val customerInvoices = invoices.filter { it.customerId == customer.id && !it.isPurchase && !it.isDraft }
+  val customerInvoices = invoices.filter { it.customerId == customer.id && !it.isDraft }
   val relatedCustomerTx = customerTransactions.filter { it.customerId == customer.id }
 
   val combinedTxList = remember(customerInvoices, relatedCustomerTx) {
     val list = mutableListOf<StatementRow>()
     customerInvoices.forEach { inv ->
-      // Debit for the invoice total
-      list.add(
-        StatementRow(
-          date = inv.invoiceDate,
-          description = "فاتورة مبيعات رقم #${inv.id}",
-          debit = inv.total,
-          credit = 0.0,
-          dueDate = inv.dueDate
-        )
-      )
-      // Credit for any amount paid at the time of invoice
-      if (inv.paidAmount > 0) {
+      val isReturn = inv.total < 0 || inv.subtotal < 0
+      val absTotal = kotlin.math.abs(inv.total)
+      val absPaid = kotlin.math.abs(inv.paidAmount)
+      if (inv.isPurchase) {
+        if (isReturn) {
+          list.add(
+            StatementRow(
+              date = inv.invoiceDate,
+              description = "فاتورة مرتجع مشتريات من العميل رقم #${inv.id}",
+              debit = absTotal,
+              credit = 0.0,
+              dueDate = inv.dueDate
+            )
+          )
+        } else {
+          list.add(
+            StatementRow(
+              date = inv.invoiceDate,
+              description = "فاتورة شراء بضاعة من العميل رقم #${inv.id}",
+              debit = 0.0,
+              credit = absTotal,
+              dueDate = inv.dueDate
+            )
+          )
+          if (absPaid > 0) {
+            list.add(
+              StatementRow(
+                date = inv.invoiceDate + 1000,
+                description = "دفعة مسددة للعميل عن فاتورة شراء #${inv.id}",
+                debit = absPaid,
+                credit = 0.0,
+                dueDate = inv.dueDate
+              )
+            )
+          }
+        }
+      } else if (isReturn) {
+        // Return reduces customer debt (credit)
         list.add(
           StatementRow(
-            date = inv.invoiceDate + 1000,
-            description = "دفعة مسددة على فاتورة #${inv.id}",
+            date = inv.invoiceDate,
+            description = "فاتورة مرتجع مبيعات رقم #${inv.id}",
             debit = 0.0,
-            credit = inv.paidAmount,
+            credit = absTotal,
             dueDate = inv.dueDate
           )
         )
+        if (absPaid > 0) {
+          list.add(
+            StatementRow(
+              date = inv.invoiceDate + 1000,
+              description = "سند صرف / رد نقدي لمرتجع #${inv.id}",
+              debit = absPaid,
+              credit = 0.0,
+              dueDate = inv.dueDate
+            )
+          )
+        }
+      } else {
+        // Debit for the invoice total
+        list.add(
+          StatementRow(
+            date = inv.invoiceDate,
+            description = "فاتورة مبيعات رقم #${inv.id}",
+            debit = inv.total,
+            credit = 0.0,
+            dueDate = inv.dueDate
+          )
+        )
+        // Credit for any amount paid at the time of invoice
+        if (inv.paidAmount > 0) {
+          list.add(
+            StatementRow(
+              date = inv.invoiceDate + 1000,
+              description = "دفعة مسددة على فاتورة #${inv.id}",
+              debit = 0.0,
+              credit = inv.paidAmount,
+              dueDate = inv.dueDate
+            )
+          )
+        }
       }
     }
     relatedCustomerTx.forEach { tx ->
+      val isCredit = tx.transactionType in listOf("دفعة", "سداد", "تحصيل", "شراء", "دائن")
       list.add(
         StatementRow(
           date = tx.date,
-          description = tx.note.ifEmpty { if (tx.transactionType == "بيع") "فاتورة آجلة / دَيْن" else "سند قبض مسدد" },
-          debit = if (tx.transactionType == "بيع") tx.amount else 0.0,
-          credit = if (tx.transactionType == "دفعة") tx.amount else 0.0,
+          description = tx.note.ifEmpty { if (!isCredit) "فاتورة آجلة / دَيْن" else "سند قبض / شراء مسدد" },
+          debit = if (!isCredit) tx.amount else 0.0,
+          credit = if (isCredit) tx.amount else 0.0,
           dueDate = tx.dueDate
         )
       )
@@ -954,7 +1215,7 @@ fun SupplierStatementDetail(
   }
 
   val totalPurchases = sortedTxList.filter { it.transactionType == "شراء" }.sumOf { it.amount }
-  val totalPayments = sortedTxList.filter { it.transactionType == "دفعة" }.sumOf { it.amount }
+  val totalPayments = sortedTxList.filter { it.transactionType in listOf("دفعة", "سداد", "مرتجع", "مرتجع شراء") }.sumOf { it.amount }
   val supplierBalance = totalPurchases - totalPayments
 
   var showAddTxFields by remember { mutableStateOf(false) }
@@ -1206,11 +1467,20 @@ fun calculateOverdueCustomers(
   val overdueList = mutableListOf<OverdueCustomerInfo>()
 
   customers.forEach { cust ->
-    val custInvoices = invoices.filter { it.customerId == cust.id }
+    val custInvoices = invoices.filter { it.customerId == cust.id && !it.isPurchase && !it.isDraft }
     val custTxs = customerTransactions.filter { it.customerId == cust.id }
 
-    val totalDebit = custInvoices.sumOf { it.total } + custTxs.filter { it.transactionType == "بيع" }.sumOf { it.amount }
-    val totalCredit = custInvoices.sumOf { it.paidAmount } + custTxs.filter { it.transactionType == "دفعة" }.sumOf { it.amount }
+    val salesInvoices = custInvoices.filter { it.total >= 0 && it.subtotal >= 0 }
+    val returnInvoices = custInvoices.filter { it.total < 0 || it.subtotal < 0 }
+
+    val totalDebit = salesInvoices.sumOf { it.total } + 
+                     returnInvoices.sumOf { kotlin.math.abs(it.paidAmount) } + 
+                     custTxs.filter { it.transactionType == "بيع" || it.transactionType == "صرف" }.sumOf { it.amount }
+
+    val totalCredit = salesInvoices.sumOf { it.paidAmount } + 
+                      returnInvoices.sumOf { kotlin.math.abs(it.total) } + 
+                      custTxs.filter { it.transactionType == "دفعة" || it.transactionType == "سداد" }.sumOf { it.amount }
+
     val outstanding = totalDebit - totalCredit
 
     if (outstanding > 0.01) {
@@ -1221,7 +1491,7 @@ fun calculateOverdueCustomers(
         debitItemsWithDueDate.add(Pair(due, tx.amount))
       }
       
-      custInvoices.forEach { inv ->
+      salesInvoices.forEach { inv ->
         val unpaid = inv.total - inv.paidAmount
         if (unpaid > 0) {
           val due = inv.dueDate ?: (inv.invoiceDate + 14L * 86400000L)

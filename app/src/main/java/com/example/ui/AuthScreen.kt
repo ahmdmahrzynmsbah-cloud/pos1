@@ -34,6 +34,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
@@ -167,51 +168,52 @@ fun AuthScreen(viewModel: AppViewModel) {
       Card(
         modifier = Modifier
           .fillMaxWidth()
-          .widthIn(max = 480.dp)
-          .padding(horizontal = 24.dp, vertical = 16.dp),
-        shape = RoundedCornerShape(24.dp),
+          .widthIn(max = 440.dp)
+          .padding(horizontal = 16.dp, vertical = 12.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
           containerColor = MaterialTheme.colorScheme.surface,
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
       ) {
       Column(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(32.dp),
+          .padding(horizontal = 18.dp, vertical = 22.dp),
         horizontalAlignment = Alignment.CenterHorizontally
       ) {
         
-        AppLogo(size = 80.dp, logoUrl = storeLogoUrl)
+        AppLogo(size = 64.dp, logoUrl = storeLogoUrl)
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         Text(
           storeName, 
-          style = MaterialTheme.typography.headlineMedium, 
+          fontSize = 19.sp, 
           color = MaterialTheme.colorScheme.primary, 
           fontWeight = FontWeight.Bold,
           textAlign = TextAlign.Center
         )
         
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
         
         Text(
           if (isLogin) "مرحباً بك! الدخول مقتصر على المستخدمين المعتمدين من الأدمن" else "تقديم طلب فتح حساب لاعتماده وتفعيله من قِبل الأدمن", 
-          style = MaterialTheme.typography.bodyMedium, 
+          fontSize = 12.sp,
+          lineHeight = 17.sp,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           textAlign = TextAlign.Center
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         // Prominent Mode Selector: Login vs Register
         Row(
           modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
-            .padding(4.dp),
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .padding(3.dp),
           horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
           Surface(
@@ -225,26 +227,27 @@ fun AuthScreen(viewModel: AppViewModel) {
               phoneError = null
               viewModel.resetAuthState()
             },
-            shape = RoundedCornerShape(10.dp),
+            shape = RoundedCornerShape(9.dp),
             color = if (isLogin) MaterialTheme.colorScheme.primary else Color.Transparent,
             modifier = Modifier.weight(1f)
           ) {
             Row(
-              modifier = Modifier.padding(vertical = 10.dp),
+              modifier = Modifier.padding(vertical = 8.dp),
               horizontalArrangement = Arrangement.Center,
               verticalAlignment = Alignment.CenterVertically
             ) {
               Icon(
                 Icons.Filled.Lock,
                 contentDescription = null,
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(15.dp),
                 tint = if (isLogin) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
               )
-              Spacer(modifier = Modifier.width(6.dp))
+              Spacer(modifier = Modifier.width(5.dp))
               Text(
                 "تسجيل الدخول",
                 fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
+                fontSize = 12.sp,
+                maxLines = 1,
                 color = if (isLogin) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
               )
             }
@@ -261,33 +264,34 @@ fun AuthScreen(viewModel: AppViewModel) {
               phoneError = null
               viewModel.resetAuthState()
             },
-            shape = RoundedCornerShape(10.dp),
+            shape = RoundedCornerShape(9.dp),
             color = if (!isLogin) MaterialTheme.colorScheme.primary else Color.Transparent,
             modifier = Modifier.weight(1f)
           ) {
             Row(
-              modifier = Modifier.padding(vertical = 10.dp),
+              modifier = Modifier.padding(vertical = 8.dp),
               horizontalArrangement = Arrangement.Center,
               verticalAlignment = Alignment.CenterVertically
             ) {
               Icon(
                 Icons.Filled.Person,
                 contentDescription = null,
-                modifier = Modifier.size(16.dp),
+                modifier = Modifier.size(15.dp),
                 tint = if (!isLogin) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
               )
-              Spacer(modifier = Modifier.width(6.dp))
+              Spacer(modifier = Modifier.width(5.dp))
               Text(
                 "طلب اعتماد حساب",
                 fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
+                fontSize = 12.sp,
+                maxLines = 1,
                 color = if (!isLogin) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
               )
             }
           }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
         
         AnimatedVisibility(visible = isLogin) {
           Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -296,18 +300,29 @@ fun AuthScreen(viewModel: AppViewModel) {
               modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                .clickable { isAdmin = !isAdmin }
+                .padding(horizontal = 12.dp, vertical = 6.dp),
               horizontalArrangement = Arrangement.SpaceBetween
             ) {
-              Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+              Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+              ) {
                 Icon(
                   Icons.Filled.Lock,
                   contentDescription = null,
                   tint = if (isAdmin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                  modifier = Modifier.size(20.dp)
+                  modifier = Modifier.size(18.dp)
                 )
-                Text("دخول كمدير النظام (الأدمن)", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                  "دخول كمدير النظام (الأدمن)",
+                  fontWeight = FontWeight.Bold,
+                  fontSize = 12.5.sp,
+                  maxLines = 1,
+                  color = if (isAdmin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                )
               }
               Switch(
                 checked = isAdmin, 
@@ -320,6 +335,7 @@ fun AuthScreen(viewModel: AppViewModel) {
                     email = "admin"
                   }
                 },
+                modifier = Modifier.scale(0.8f),
                 colors = SwitchDefaults.colors(
                   checkedThumbColor = MaterialTheme.colorScheme.primary,
                   checkedTrackColor = MaterialTheme.colorScheme.primaryContainer
@@ -359,10 +375,10 @@ fun AuthScreen(viewModel: AppViewModel) {
                   verticalAlignment = Alignment.CenterVertically,
                   horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                  Icon(Icons.Filled.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                  Icon(Icons.Filled.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                   Text(
                     "التطبيق لا يقبل دخول أي مستخدم إلا بعد اعتماده وتفعيله حصراً بواسطة مدير النظام.",
-                    fontSize = 10.sp,
+                    fontSize = 10.5.sp,
                     lineHeight = 15.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                   )
@@ -372,14 +388,14 @@ fun AuthScreen(viewModel: AppViewModel) {
           }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         AnimatedVisibility(
           visible = !isLogin,
           enter = expandVertically(),
           exit = shrinkVertically()
         ) {
-          Column {
+          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
               value = businessName,
               onValueChange = { 
@@ -387,15 +403,14 @@ fun AuthScreen(viewModel: AppViewModel) {
                 businessNameError = null
                 if (authState !is AuthState.Idle && authState !is AuthState.Loading) viewModel.resetAuthState()
               },
-              label = { Text("اسم النشاط التجاري") },
-              leadingIcon = { Icon(Icons.Filled.Store, contentDescription = null) },
+              label = { Text("اسم النشاط التجاري", fontSize = 12.5.sp) },
+              leadingIcon = { Icon(Icons.Filled.Store, contentDescription = null, modifier = Modifier.size(20.dp)) },
               modifier = Modifier.fillMaxWidth(),
-              shape = RoundedCornerShape(12.dp),
+              shape = RoundedCornerShape(10.dp),
               singleLine = true,
               isError = businessNameError != null,
               supportingText = { if (businessNameError != null) Text(businessNameError!!) }
             )
-            Spacer(modifier = Modifier.height(16.dp))
 
             OutlinedTextField(
               value = name,
@@ -404,26 +419,25 @@ fun AuthScreen(viewModel: AppViewModel) {
                 nameError = null
                 if (authState !is AuthState.Idle && authState !is AuthState.Loading) viewModel.resetAuthState()
               },
-              label = { Text("الاسم الكامل") },
-              leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null) },
+              label = { Text("الاسم الكامل", fontSize = 12.5.sp) },
+              leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null, modifier = Modifier.size(20.dp)) },
               modifier = Modifier.fillMaxWidth(),
-              shape = RoundedCornerShape(12.dp),
+              shape = RoundedCornerShape(10.dp),
               singleLine = true,
               isError = nameError != null,
               supportingText = { if (nameError != null) Text(nameError!!) }
             )
-            Spacer(modifier = Modifier.height(16.dp))
 
             OutlinedTextField(
               value = securityWord,
               onValueChange = { securityWord = it },
-              label = { Text("كلمة سر الاستعادة (مهمة)") },
-              leadingIcon = { Icon(Icons.Filled.Lock, contentDescription = null) },
+              label = { Text("كلمة سر الاستعادة (مهمة)", fontSize = 12.5.sp) },
+              leadingIcon = { Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(20.dp)) },
               modifier = Modifier.fillMaxWidth(),
-              shape = RoundedCornerShape(12.dp),
+              shape = RoundedCornerShape(10.dp),
               singleLine = true
             )
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(2.dp))
           }
         }
 
@@ -551,7 +565,7 @@ fun AuthScreen(viewModel: AppViewModel) {
           }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         OutlinedTextField(
           value = password,
@@ -560,26 +574,27 @@ fun AuthScreen(viewModel: AppViewModel) {
             passwordError = null
             if (authState !is AuthState.Idle && authState !is AuthState.Loading) viewModel.resetAuthState()
           },
-          label = { Text(if (isAdmin) "كلمة مرور الأدمن (الافتراضية: mmnn12345)" else "كلمة المرور") },
-          leadingIcon = { Icon(Icons.Filled.Lock, contentDescription = null) },
+          label = { Text(if (isAdmin) "كلمة مرور الأدمن (الافتراضية: mmnn12345)" else "كلمة المرور", fontSize = 12.5.sp) },
+          leadingIcon = { Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(20.dp)) },
           trailingIcon = {
             IconButton(onClick = { passwordVisible = !passwordVisible }) {
               Icon(
                 imageVector = if (passwordVisible) Icons.Filled.Visibility else Icons.Filled.VisibilityOff,
-                contentDescription = if (passwordVisible) "إخفاء كلمة المرور" else "إظهار كلمة المرور"
+                contentDescription = if (passwordVisible) "إخفاء كلمة المرور" else "إظهار كلمة المرور",
+                modifier = Modifier.size(20.dp)
               )
             }
           },
           visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
           keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
           modifier = Modifier.fillMaxWidth(),
-          shape = RoundedCornerShape(12.dp),
+          shape = RoundedCornerShape(10.dp),
           singleLine = true,
           isError = passwordError != null,
           supportingText = { if (passwordError != null) Text(passwordError!!) }
         )
         
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
         // Display Success State after Registration
         AnimatedVisibility(visible = authState is AuthState.RegistrationSuccess) {
@@ -679,13 +694,13 @@ fun AuthScreen(viewModel: AppViewModel) {
         } else {
           if (!isLogin) {
             Card(
-              shape = RoundedCornerShape(12.dp),
-              colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)),
-              border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
-              modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+              shape = RoundedCornerShape(10.dp),
+              colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)),
+              border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+              modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp)
             ) {
               Row(
-                modifier = Modifier.padding(12.dp),
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
               ) {
@@ -693,13 +708,13 @@ fun AuthScreen(viewModel: AppViewModel) {
                   Icons.Filled.Lock,
                   contentDescription = null,
                   tint = MaterialTheme.colorScheme.primary,
-                  modifier = Modifier.size(22.dp)
+                  modifier = Modifier.size(18.dp)
                 )
                 Text(
-                  text = "تنبيه هام: التطبيق لا يقبل أي مستخدم إلا بعد موافقة واعتماد مدير النظام (الأدمن) حصراً.",
+                  text = "تنبيه: يتم تفعيل واعتماد الحساب من قِبل مدير النظام حصراً.",
                   fontSize = 11.sp,
                   fontWeight = FontWeight.Medium,
-                  lineHeight = 16.sp,
+                  lineHeight = 15.sp,
                   color = MaterialTheme.colorScheme.onSurface
                 )
               }
@@ -722,14 +737,21 @@ fun AuthScreen(viewModel: AppViewModel) {
             },
             modifier = Modifier
               .fillMaxWidth()
-              .height(56.dp),
-            shape = RoundedCornerShape(16.dp),
-            elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
+              .height(48.dp),
+            shape = RoundedCornerShape(10.dp),
+            contentPadding = PaddingValues(vertical = 8.dp, horizontal = 12.dp),
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = 3.dp)
           ) {
             Text(
-              if (isLogin) (if (isAdmin) "تسجيل الدخول كمدير النظام" else "تسجيل الدخول") else "إرسال طلب الحساب للاعتماد من الأدمن",
-              style = MaterialTheme.typography.titleMedium,
-              fontWeight = FontWeight.Bold
+              text = if (isLogin) {
+                if (isAdmin) "تسجيل الدخول كمدير" else "تسجيل الدخول"
+              } else {
+                "إرسال طلب الاعتماد"
+              },
+              fontSize = 14.5.sp,
+              fontWeight = FontWeight.Bold,
+              maxLines = 1,
+              color = MaterialTheme.colorScheme.onPrimary
             )
           }
 
@@ -855,7 +877,7 @@ fun AuthScreen(viewModel: AppViewModel) {
           }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         
         TextButton(
           onClick = { 
@@ -872,7 +894,8 @@ fun AuthScreen(viewModel: AppViewModel) {
           Text(
             if (isLogin) "ليس لديك حساب؟ إنشاء حساب جديد" else "لديك حساب بالفعل؟ تسجيل الدخول",
             color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.SemiBold
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 13.sp
           )
         }
       }
